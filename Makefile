@@ -30,6 +30,7 @@ fixtures:
 
 evals-det:
 	python3 -m evals.det.run
+
 # --- P0-3: core, compose, smoke (owner: P0-3) ---
 .PHONY: compose-up compose-down smoke smoke-local synthetic-datadir
 

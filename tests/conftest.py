@@ -1,10 +1,10 @@
-"""Shared pytest config. The real log API and permissions loader come from core/ (P0-3)."""
+"""Shared pytest config. Log API and permissions loader are the real ones from core/."""
 
 from __future__ import annotations
 
 from pytest import fixture
 
-from tests.stubs.logapi import LogSink
+from core.log import LogSink
 
 
 @fixture

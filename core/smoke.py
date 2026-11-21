@@ -37,7 +37,7 @@ def run_smoke(ntfy_url: str | None = None) -> list[str]:
     elif ntfy_url:
         try:
             url = ntfy_url.rstrip("/") + "/v1/health"
-            with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310
+            with urllib.request.urlopen(url, timeout=5) as resp:  # noqa: S310  # nosec B310
                 if resp.status != 200:
                     fails.append("ntfy unhealthy")
         except OSError:

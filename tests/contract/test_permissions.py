@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from core.permissions import load_permissions
 from scripts.check_permissions_lock import current
-from tests.stubs.permissions import load_permissions
 
 ROOT = Path(__file__).resolve().parents[2]
 
