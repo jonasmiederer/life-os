@@ -54,3 +54,10 @@ OUT ?= .lifeos/synthetic
 synthetic-datadir:
 	rm -rf $(OUT)
 	python3 -m core synthetic-datadir --out $(OUT)
+
+# --- P0-4: backup, restore --verify, reindex (owner: P0-4) ---
+.PHONY: backup-test
+
+# Needs restic on PATH. Uses a temp local repo and a synthetic data dir only.
+backup-test:
+	pytest tests/contract/test_backup.py tests/unit/core/test_reindex.py

@@ -7,9 +7,11 @@ import sys
 import time
 from pathlib import Path
 
+from core.backup import BackupError, backup, restore_verify
 from core.config import ConfigError, load_config
 from core.datadir import DataRepoError, check_layout, check_no_remote, init_data_dir
 from core.log import log_event
+from core.reindex import reindex
 from core.report import format_report
 from core.smoke import run_smoke
 from core.store import scan
@@ -51,6 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--dry-run", action="store_true", required=True)
     d = sub.add_parser("synthetic-datadir", help="build a synthetic data dir")
     d.add_argument("--out", type=Path, required=True)
+    sub.add_parser("backup", help="restic backup of the whole data dir")
+    rs = sub.add_parser("restore", help="restore the latest snapshot to a scratch dir")
+    rs.add_argument("--verify", action="store_true", required=True)
+    sub.add_parser("reindex", help="delete and rebuild the qmd cache")
     sub.add_parser("serve", help="run the core service")
     args = parser.parse_args(argv)
 
@@ -82,10 +88,21 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "synthetic-datadir":
             populate(args.out)
             populate_invalid(args.out)
+        elif args.cmd == "backup":
+            backup(root, cfg.restic_repo, cfg.restic_password_file)
+        elif args.cmd == "restore":
+            fails = restore_verify(cfg.restic_repo, cfg.restic_password_file)
+            print("\n".join(fails) or "restore verify ok")
+            return 1 if fails else 0
+        elif args.cmd == "reindex":
+            reindex(root)
         elif args.cmd == "serve":
             return _serve(root)
     except DataRepoError as exc:
         print(f"data repo error: {exc}", file=sys.stderr)
+        return 1
+    except BackupError as exc:
+        print(f"backup error: {exc}", file=sys.stderr)
         return 1
     return 0
 
