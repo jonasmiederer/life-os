@@ -1,0 +1,22 @@
+name: Bug
+description: Something is broken. Use only the output of `lifeos report --dry-run`.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **WARNING: this repository is public. Paste only the allowlisted fingerprint and frames from `lifeos report --dry-run`. No logs, no letters, no paths.**
+  - type: textarea
+    id: report
+    attributes:
+      label: What happened
+      description: Describe in words. Add the fingerprint if you have one.
+    validations:
+      required: true
+  - type: checkboxes
+    id: no-real-data
+    attributes:
+      label: Privacy
+      options:
+        - label: This issue contains no real data (no names, addresses, numbers, paths, logs, tokens or document text).
+          required: true

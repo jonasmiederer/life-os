@@ -1,0 +1,6 @@
+# path:<glob>      skip content rules for matching files
+# synthetic:<glob> exempt from the synthetic marker rule (and binary rule)
+# Any file under docs/ or tests/fixtures/ needs the line "synthetic: true" unless listed here.
+# strip:<literal>  public literal removed before deny-list matching (the public GitHub handle)
+strip:jonasmiederer
+path:scripts/privacy_scan.py

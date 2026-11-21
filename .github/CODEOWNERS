@@ -1,0 +1,19 @@
+# The owner reviews everything. High-risk paths are listed explicitly.
+*                              @jonasmiederer
+
+/.github/**                    @jonasmiederer
+/AGENTS.md                     @jonasmiederer
+/.gitignore                    @jonasmiederer
+/.dockerignore                 @jonasmiederer
+/.gitleaks.toml                @jonasmiederer
+/.pre-commit-config.yaml       @jonasmiederer
+/.privacy-allow                @jonasmiederer
+/scripts/**                    @jonasmiederer
+/Makefile                      @jonasmiederer
+
+# Permission files and locks
+/core/permissions/**           @jonasmiederer
+/helpers/*/permissions.yml     @jonasmiederer
+/config/policy.toml            @jonasmiederer
+/tests/security/**             @jonasmiederer
+/evals/baselines/**            @jonasmiederer

@@ -1,0 +1,47 @@
+# Runtime data never belongs in this repo
+/data/
+/files/
+/raw/
+/notes/
+/own/
+/audit/
+/review/
+/inbox/
+/candidates/
+.lifeos/
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+*.p12
+secrets/
+*.secret
+denylist*.txt
+
+# Real-world documents (fixtures must be generated and allowlisted explicitly)
+*.eml
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.heic
+!tests/fixtures/**
+
+# Python and tooling
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,23 @@
+# Same gates as scripts/hooks/*. Use either `pre-commit install` or core.hooksPath (make install-hooks).
+repos:
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: gitleaks (staged)
+        entry: gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: privacy-scan
+        name: privacy scan with deny list (staged)
+        entry: python3 scripts/privacy_scan.py --staged
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: privacy-scan-push
+        name: privacy scan and identity check (outgoing commits)
+        entry: python3 scripts/privacy_scan.py --push
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

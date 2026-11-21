@@ -1,0 +1,22 @@
+name: Idea
+description: A feature or change. One paragraph.
+labels: [idea]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **WARNING: this repository is public. Do not paste real letters, names, numbers, paths, logs or tokens.**
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: One paragraph. Which helper, which data classes, size S, M or L.
+    validations:
+      required: true
+  - type: checkboxes
+    id: no-real-data
+    attributes:
+      label: Privacy
+      options:
+        - label: This issue contains no real data (no names, addresses, numbers, paths, logs, tokens or document text).
+          required: true
