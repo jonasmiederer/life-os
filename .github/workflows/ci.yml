@@ -145,6 +145,8 @@ jobs:
           tar -xzf actionlint.tgz actionlint
           ./actionlint
 
+  # Offline: no network use, no secret, no OCR binary. Text comes from the fixture generator
+  # (sidecar text path). Failure output is field names and scores only.
   evals-det:
     runs-on: ubuntu-latest
     timeout-minutes: 10
