@@ -29,7 +29,14 @@ ALLOW_FILE = ".privacy-allow"
 ZERO = "0" * 40
 STRIP = []  # public literals (the GitHub handle) removed before deny-list matching only
 
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+# Local part starts with a letter or digit, so a column-0 decorator in a diff
+# ("+@pytest.fixture") is not an address. The domain has a dot and an alphabetic TLD.
+EMAIL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+# Exact GitHub-owned commit identities. Applied to commit metadata only.
+GITHUB_IDENTITY = re.compile(
+    r"noreply@github\.com|(?:\d+\+)?[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?@users\.noreply\.github\.com")
+# The one message line Dependabot writes, matched as a whole line.
+DEPENDABOT_TRAILER = "Signed-off-by: dependabot[bot] <support@github.com>"
 EMAIL_OK = re.compile(
     r"(@(example\.(com|org|net)|[A-Za-z0-9.-]*\.invalid|localhost|users\.noreply\.github\.com|noreply\.github\.com)$"
     r"|^noreply@|^git@github\.com$)", re.I)
@@ -90,7 +97,7 @@ def scan_text(label, text, deny, findings):
     load_allow()
     """Record findings as (label, line number, rule). Never the text itself."""
     for n, line in enumerate(text.split("\n"), 1):
-        if "privacy-allow" in line:
+        if "privacy-allow" in line or line.rstrip("\r") == DEPENDABOT_TRAILER:
             continue
         for name, rx in RULES.items():
             if rx.search(line):
@@ -165,9 +172,9 @@ def check_identity(revs, findings):
     out = git("log", "--format=%H %ae %ce", *revs).decode()
     for ln in out.splitlines():
         sha, ae, ce = ln.split(" ")
-        if ae != want:
+        if ae != want and not GITHUB_IDENTITY.fullmatch(ae):
             findings.append(("commit " + sha[:10], 0, "author-email-mismatch"))
-        if ce != want:
+        if ce != want and not GITHUB_IDENTITY.fullmatch(ce):
             findings.append(("commit " + sha[:10], 0, "committer-email-mismatch"))
 
 
