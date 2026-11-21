@@ -9,8 +9,8 @@ import pytest
 
 from core.clock import FakeClock
 from core.config import ConfigError, load_config
-from core.log import LogError, audit, log_event
-from core.permissions import PermissionsError, load_permissions, permissions_digest
+from core.log import LogError, LogSink, audit, log_event
+from core.permissions import PermissionsError, Tool, load_permissions
 
 # Alias: a dotted decorator at column 0 reads as an email to the push scanner.
 parametrize = pytest.mark.parametrize
@@ -61,22 +61,55 @@ def _perm(tmp_path: Path, text: str) -> Path:
     return p
 
 
-def test_permissions_load_and_digest_changes(tmp_path: Path) -> None:
-    a = load_permissions(_perm(tmp_path, "version: 1\nhelper: document\nreads: [notes]\n"))
-    b = load_permissions(_perm(tmp_path, "version: 1\nhelper: document\nreads: [notes, raw]\n"))
-    assert a.reads == ("notes",)
-    assert permissions_digest(a) != permissions_digest(b)
+GOOD = """helper: financial
+agents:
+  - name: import
+    role: actor
+    reads: [C3]
+    tools: [{name: parse_file, kind: read}]
+    network: none
+  - name: analyst
+    role: reader
+    reads: [C3, C4]
+    tools: [{name: query_transactions, kind: read}, {name: write_note, kind: write_local}]
+"""
+
+
+def test_permissions_load_design_example(tmp_path: Path) -> None:
+    perms = load_permissions(_perm(tmp_path, GOOD))
+    assert perms.helper == "financial"
+    assert [a.role for a in perms.agents] == ["actor", "reader"]
+    assert perms.agents[1].tools[1] == Tool("write_note", "write_local")
+    assert perms.agents[0].network == ()
 
 
 @parametrize(
-    "text",
+    "old,new",
     [
-        "version: 1\nhelper: d\nroot: true\n",
-        "version: 2\nhelper: d\n",
-        "- x\n",
-        "version: 1\nhelper: d\nreads: x\n",
+        ("role: reader", "role: root"),
+        ("kind: write_local", "kind: act"),
+        ("reads: [C3, C4]", "reads: [C9]"),
+        ("network: none", "network: yes"),
+        ("    role: reader\n", "    role: reader\n    network: [example.com]\n"),
+        ("helper: financial", "helper: financial\nextra: 1"),
+        ("name: analyst", "name: import"),
     ],
 )
-def test_permissions_strict(tmp_path: Path, text: str) -> None:
+def test_permissions_strict(tmp_path: Path, old: str, new: str) -> None:
+    assert old in GOOD
     with pytest.raises(PermissionsError):
-        load_permissions(_perm(tmp_path, text))
+        load_permissions(_perm(tmp_path, GOOD.replace(old, new)))
+
+
+def test_permissions_not_a_mapping(tmp_path: Path) -> None:
+    with pytest.raises(PermissionsError):
+        load_permissions(_perm(tmp_path, "- x\n"))
+
+
+def test_log_sink_keeps_checked_lines() -> None:
+    sink = LogSink()
+    sink.info("document.processed", doc_id="doc-1", chars=12)
+    assert '"doc_id": "doc-1"' in sink.text()
+    with pytest.raises(LogError):
+        sink.info("oops", content="Brief mit Text")
+    assert len(sink.lines) == 1
