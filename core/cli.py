@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import time
 from pathlib import Path
 
 from core.config import ConfigError, load_config
@@ -26,23 +26,14 @@ def _health(root: Path) -> list[str]:
 
 
 def _serve(root: Path) -> int:
+    """Phase 0 service loop: validate the data dir once a minute. UI and scheduler come later."""
     init_data_dir(root)
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            problems = _health(root) if self.path == "/healthz" else ["not found"]
-            self.send_response(200 if not problems else 503)
-            self.end_headers()
-
-        def log_message(self, *args: object) -> None:
-            pass
-
-    server = HTTPServer(("0.0.0.0", 8080), Handler)  # noqa: S104 (internal network only)
-    server.timeout = 60
     log_event("core.started", ok=True)
     while True:
-        server.handle_request()
-        scan(root)
+        bad = scan(root)
+        if bad:
+            log_event("core.scan", count=len(bad))
+        time.sleep(60)
 
 
 def main(argv: list[str] | None = None) -> int:
