@@ -17,9 +17,16 @@ class ConfigError(ValueError):
 class Config:
     data_dir: Path = Path("/data")
     ntfy_url: str = "http://ntfy:8080"
+    restic_repo: str = ""  # no default target: the owner chooses (D15)
+    restic_password_file: str = ""
 
 
-_KEYS = {"data_dir": str, "ntfy_url": str}
+_KEYS = {
+    "data_dir": str,
+    "ntfy_url": str,
+    "restic_repo": str,
+    "restic_password_file": str,
+}
 
 
 def load_config(path: Path | None = None, env: Mapping[str, str] | None = None) -> Config:
@@ -40,6 +47,10 @@ def load_config(path: Path | None = None, env: Mapping[str, str] | None = None) 
         values["data_dir"] = env["LIFEOS_DATA_DIR"]
     if env.get("LIFEOS_NTFY_URL"):
         values["ntfy_url"] = env["LIFEOS_NTFY_URL"]
+    if env.get("LIFEOS_RESTIC_REPO"):
+        values["restic_repo"] = env["LIFEOS_RESTIC_REPO"]
+    if env.get("LIFEOS_RESTIC_PASSWORD_FILE"):
+        values["restic_password_file"] = env["LIFEOS_RESTIC_PASSWORD_FILE"]
     if "data_dir" in values:
         values["data_dir"] = Path(values["data_dir"])  # type: ignore[assignment]
     return Config(**values)  # type: ignore[arg-type]
