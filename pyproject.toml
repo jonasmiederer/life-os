@@ -49,7 +49,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["scripts", "tests", "evals"]
+files = ["scripts", "tests", "evals", "core/gateway"]
 strict = true
 exclude = ["tests/fixtures/", "scripts/privacy_scan.py"]
 

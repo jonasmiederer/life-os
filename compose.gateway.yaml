@@ -1,0 +1,19 @@
+# Gateway service (K1). Only holder of the Kiro credential. No data dir mount.
+# Use with: docker compose -f compose.yaml -f compose.gateway.yaml ...
+# Image build (kiro-cli inside) and the egress allowlist are not part of K1.
+# KIRO_API_KEY comes from the host env or a secret, never from a file in this repo.
+services:
+  gateway:
+    image: lifeos-gateway:dev
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      KIRO_API_KEY: ${KIRO_API_KEY:?set KIRO_API_KEY in the environment}
+      LIFEOS_KIRO_MODEL: ${LIFEOS_KIRO_MODEL:?pin a model id, not auto}
+    tmpfs:
+      - /tmp
+    # Default network on purpose: the gateway needs egress to Kiro endpoints only.
