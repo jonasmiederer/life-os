@@ -22,7 +22,7 @@ services:
       ntfy:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/healthz', timeout=3)"]
+      test: ["CMD", "lifeos", "health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -41,7 +41,7 @@ services:
       NTFY_LISTEN_HTTP: ":8080"
       NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
     tmpfs:
-      - /var/cache/ntfy:uid=10001,gid=10001
+      - /var/cache/ntfy:mode=1777
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/v1/health || exit 1"]

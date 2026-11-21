@@ -19,6 +19,8 @@ class DataRepoError(RuntimeError):
 
 
 def _git(root: Path, *args: str) -> str:
+    # safe.directory: a bind mount can show the data dir root as owned by another uid
+    # (seen with podman on macOS). Repo config and hooks are still checked by the guard.
     env = {
         **os.environ,
         "GIT_CONFIG_GLOBAL": os.devnull,
@@ -26,7 +28,7 @@ def _git(root: Path, *args: str) -> str:
         "GIT_CONFIG_NOSYSTEM": "1",
     }
     res = subprocess.run(  # noqa: S603
-        ["git", "-C", str(root), *args],  # noqa: S607
+        ["git", "-c", f"safe.directory={root}", "-C", str(root), *args],  # noqa: S607
         capture_output=True,
         text=True,
         env=env,
