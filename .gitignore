@@ -45,3 +45,8 @@ htmlcov/
 .idea/
 .vscode/
 *.log
+
+# Docker (P0-3)
+compose.override.yaml
+/data-synthetic/
+*.egg-info/

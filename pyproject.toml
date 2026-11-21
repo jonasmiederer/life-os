@@ -1,5 +1,23 @@
-# Tool config and dev dependencies only. The [project] table and the `lifeos`
-# entry point belong to P0-3 and are added there.
+# Tool config and dev dependencies: P0-2. [project] and the `lifeos` entry point: P0-3.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lifeos"
+version = "0.0.1"
+description = "life-os core: note store, validation, runtime basics"
+requires-python = ">=3.12"
+dependencies = [
+  "PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+lifeos = "core.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["core*"]
 
 [dependency-groups]
 dev = [

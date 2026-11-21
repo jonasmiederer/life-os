@@ -30,3 +30,27 @@ fixtures:
 
 evals-det:
 	python3 -m evals.det.run
+
+# --- P0-3: core, compose, smoke (owner: P0-3) ---
+.PHONY: compose-up compose-down smoke smoke-local synthetic-datadir
+
+compose-up:
+	mkdir -p data
+	docker compose up -d --build --wait
+
+compose-down:
+	docker compose down
+
+# Runs inside the core container against the ntfy service. Needs `make compose-up` first.
+smoke:
+	docker compose exec -T core lifeos smoke --ntfy-url http://ntfy:8080
+
+# Same check without Docker or ntfy.
+smoke-local:
+	python3 -m core smoke
+
+# Builds a synthetic data dir for restore tests. Usage: make synthetic-datadir OUT=/some/dir
+OUT ?= .lifeos/synthetic
+synthetic-datadir:
+	rm -rf $(OUT)
+	python3 -m core synthetic-datadir --out $(OUT)

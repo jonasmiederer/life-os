@@ -6,8 +6,8 @@ import secrets
 
 import pytest
 
+from core.log import LogError, LogSink
 from scripts.check_canary import find_canaries
-from tests.stubs.logapi import LogSink
 
 pytestmark = pytest.mark.security
 
@@ -23,7 +23,17 @@ def test_canary_not_in_logs(log_sink: LogSink) -> None:
     assert not find_canaries(log_sink.text())
 
 
-def test_canary_planted_in_log_is_caught(log_sink: LogSink) -> None:
+def test_log_api_refuses_document_text(log_sink: LogSink) -> None:
     canary = f"CANARY-{secrets.token_hex(8)}"
-    log_sink.info("oops", content=f"Brief mit {canary}")
+    with pytest.raises(LogError):
+        log_sink.info("oops", content=f"Brief mit {canary}")
+    with pytest.raises(LogError):
+        log_sink.info("oops", doc_id=f"Brief mit {canary}")
+    assert not find_canaries(log_sink.text())
+
+
+def test_canary_planted_in_log_is_caught(log_sink: LogSink) -> None:
+    # The real API refuses free text, so plant the line past it to test the detector.
+    canary = f"CANARY-{secrets.token_hex(8)}"
+    log_sink.lines.append(f'{{"event": "oops", "content": "Brief mit {canary}"}}')
     assert find_canaries(log_sink.text()) == [canary]
