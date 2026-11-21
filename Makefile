@@ -1,4 +1,4 @@
-.PHONY: privacy-scan install-hooks
+.PHONY: privacy-scan install-hooks lint types unit
 
 # Full local gate. Run before the first push and before each release tag.
 privacy-scan:
@@ -8,3 +8,14 @@ privacy-scan:
 
 install-hooks:
 	git config core.hooksPath scripts/hooks
+
+# Local test gate, same commands as CI. Needs: pip install --group dev
+lint:
+	ruff check .
+	ruff format --check .
+
+types:
+	mypy
+
+unit:
+	pytest -m "not security"
