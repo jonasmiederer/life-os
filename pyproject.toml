@@ -9,12 +9,9 @@ dev = [
     "pyyaml==6.0.3",
     "types-PyYAML==6.0.12.20260408",
 ]
-security = [
-    "bandit==1.9.4",
-    "semgrep==1.163.0",
-    "pip-audit==2.10.0",
-    "zizmor==1.26.0",
-]
+sast = ["bandit==1.9.4", "semgrep==1.163.0"]
+deps = ["pip-audit==2.10.0"]
+workflow = ["zizmor==1.26.0"]
 
 [tool.ruff]
 target-version = "py312"
@@ -31,7 +28,7 @@ select = ["E", "F", "I", "B", "UP", "S"]
 
 [tool.mypy]
 python_version = "3.12"
-files = ["tests"]
+files = ["scripts", "tests", "evals"]
 strict = true
 exclude = ["tests/fixtures/", "scripts/privacy_scan.py"]
 

@@ -1,4 +1,4 @@
-.PHONY: privacy-scan install-hooks lint types unit
+.PHONY: privacy-scan install-hooks lint types unit security fixtures evals-det
 
 # Full local gate. Run before the first push and before each release tag.
 privacy-scan:
@@ -19,3 +19,14 @@ types:
 
 unit:
 	pytest -m "not security"
+
+security:
+	pytest -m security
+
+# Generates synthetic samples at run time, then scans them. Negative tests: tests/security.
+fixtures:
+	python3 scripts/check_fixtures_clean.py tests/fixtures
+	python3 scripts/check_permissions_lock.py
+
+evals-det:
+	python3 -m evals.det.run
