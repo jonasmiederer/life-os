@@ -1,0 +1,54 @@
+# Phase 0 skeleton: core and ntfy only. No ports are published.
+# `core` sits on an internal network (no internet route).
+services:
+  core:
+    build: .
+    image: lifeos-core:dev
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      LIFEOS_DATA_DIR: /data
+      LIFEOS_NTFY_URL: http://ntfy:8080
+    volumes:
+      - ${LIFEOS_DATA_DIR:-./data}:/data
+    tmpfs:
+      - /tmp
+    networks: [internal]
+    depends_on:
+      ntfy:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    command: ["serve"]
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      NTFY_LISTEN_HTTP: ":8080"
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+    tmpfs:
+      - /var/cache/ntfy:uid=10001,gid=10001
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  internal:
+    internal: true
