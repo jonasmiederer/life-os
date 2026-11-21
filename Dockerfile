@@ -2,7 +2,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git \
+ && apt-get install -y --no-install-recommends git tesseract-ocr tesseract-ocr-deu tesseract-ocr-eng poppler-utils \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --create-home --shell /usr/sbin/nologin lifeos
 

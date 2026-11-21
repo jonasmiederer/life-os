@@ -1,5 +1,5 @@
-# Phase 0 skeleton: core and ntfy only. No ports are published.
-# `core` sits on an internal network (no internet route).
+# core and ntfy sit on an internal network (no internet route).
+# web publishes one port on 127.0.0.1 only. The VPN and HTTPS proxy sit in front (D2).
 services:
   core:
     build: .
@@ -28,6 +28,36 @@ services:
       retries: 5
       start_period: 5s
 
+  web:
+    build: .
+    image: lifeos-core:dev
+    entrypoint: ["python", "-m", "core.web"]
+    command: ["serve"]
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      LIFEOS_DATA_DIR: /data
+      LIFEOS_PASSWORD_HASH_FILE: /run/secrets/web_password_hash
+      LIFEOS_SESSION_MINUTES: "30"
+    secrets: [web_password_hash]
+    ports:
+      - "127.0.0.1:${LIFEOS_WEB_PORT:-8080}:8080"
+    volumes:
+      - ${LIFEOS_DATA_DIR:-./data}:/data
+    tmpfs:
+      - /tmp
+    networks: [edge]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/login')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   ntfy:
     image: binwiederhier/ntfy:v2.11.0
     command: ["serve"]
@@ -49,6 +79,13 @@ services:
       timeout: 5s
       retries: 5
 
+# Shortcut: web has an internet route until the gateway work item adds an egress-deny proxy.
+# It has no backend wired, so no cloud call is possible yet.
+secrets:
+  web_password_hash:
+    file: ${LIFEOS_WEB_PASSWORD_HASH_FILE:-./secrets/web_password_hash}
+
 networks:
   internal:
     internal: true
+  edge: {}
