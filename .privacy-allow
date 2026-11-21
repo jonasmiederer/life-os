@@ -4,3 +4,5 @@
 # strip:<literal>  public literal removed before deny-list matching (the public GitHub handle)
 strip:jonasmiederer
 path:scripts/privacy_scan.py
+synthetic:tests/fixtures/letters/*.png
+synthetic:tests/fixtures/letters/*.pdf

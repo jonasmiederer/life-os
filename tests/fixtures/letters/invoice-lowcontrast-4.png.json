@@ -1,0 +1,13 @@
+{
+  "amount": "320.13",
+  "currency": "EUR",
+  "date": "2030-08-30",
+  "deadline": "2030-09-29",
+  "doc_type": "invoice",
+  "file": "invoice-lowcontrast-4.png",
+  "marker": "synthetic: true",
+  "seed": 4,
+  "sender": "Musterfirma GmbH",
+  "sha256": "b67ff6bac10c32fd7f329310144ab7e53e7311c326b4710b56e749610a317fc3",
+  "variant": "lowcontrast"
+}

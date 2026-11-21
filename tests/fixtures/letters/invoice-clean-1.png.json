@@ -1,0 +1,13 @@
+{
+  "amount": "592.97",
+  "currency": "EUR",
+  "date": "2030-05-18",
+  "deadline": "2030-06-01",
+  "doc_type": "invoice",
+  "file": "invoice-clean-1.png",
+  "marker": "synthetic: true",
+  "seed": 1,
+  "sender": "Beispielwerke AG",
+  "sha256": "0628cde78d6d911a702146adee1b14d728580d0c2ccd30522557ca3365b69be0",
+  "variant": "clean"
+}

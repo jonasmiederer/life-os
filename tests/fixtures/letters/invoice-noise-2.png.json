@@ -1,0 +1,13 @@
+{
+  "amount": "103.10",
+  "currency": "EUR",
+  "date": "2030-02-27",
+  "deadline": "2030-03-20",
+  "doc_type": "invoice",
+  "file": "invoice-noise-2.png",
+  "marker": "synthetic: true",
+  "seed": 2,
+  "sender": "Testhandel KG",
+  "sha256": "a804799375a87f92adf4fc11ce2040ae95cb305057414766fa9666e4ee3dd583",
+  "variant": "noise"
+}

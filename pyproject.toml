@@ -26,6 +26,7 @@ dev = [
     "pytest==9.2.0",
     "pyyaml==6.0.3",
     "types-PyYAML==6.0.12.20260408",
+    "pillow==13.0.0",
 ]
 sast = ["bandit==1.9.4", "semgrep==1.186.0"]
 deps = ["pip-audit==2.10.1"]
@@ -42,6 +43,8 @@ select = ["E", "F", "I", "B", "UP", "S"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S603", "S607"]
+# Seeded PRNG on purpose: reproducible fixtures, no crypto.
+"tests/fixturegen/**" = ["S311"]
 "scripts/**" = ["S603", "S607"]
 
 [tool.mypy]
