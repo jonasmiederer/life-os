@@ -1,11 +1,15 @@
 """fixtures-clean: fail if any file under a directory holds a real-looking value.
 
 Allowed: reserved example domains, IBANs with check digits 00, no home paths,
-and the `synthetic: true` marker in every text file.
+and the `synthetic: true` marker in every text file. A PNG or PDF is allowed only with
+a `<name>.json` sidecar that carries the marker and the file's sha256 (the sidecar is
+itself a text file and gets all text checks).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -15,6 +19,23 @@ IBAN = re.compile(r"\b[A-Z]{2}(\d{2})(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})
 HOME = re.compile(r"/(?:Users|home)/[^/\s]+")
 OK_DOMAINS = {"example.com", "example.org", "example.net"}
 SKIP = {".gitkeep"}
+BINARY_EXT = {".png", ".pdf"}
+
+
+def check_binary(p: Path) -> list[str]:
+    """A binary is allowed only with a `<name>.json` sidecar: marker plus matching sha256."""
+    if p.suffix.lower() not in BINARY_EXT:
+        return [f"{p}: binary file, not allowed in fixtures"]
+    side = p.with_name(p.name + ".json")
+    try:
+        meta = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [f"{p}: binary without readable sidecar {side.name}"]
+    if not isinstance(meta, dict) or "synthetic: true" not in str(meta.get("marker", "")):
+        return [f"{p}: sidecar missing synthetic marker"]
+    if meta.get("sha256") != hashlib.sha256(p.read_bytes()).hexdigest():
+        return [f"{p}: sidecar sha256 does not match file"]
+    return []
 
 
 def scan(root: Path) -> list[str]:
@@ -25,7 +46,7 @@ def scan(root: Path) -> list[str]:
         try:
             text = p.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            findings.append(f"{p}: binary file, not allowed in fixtures")
+            findings.extend(check_binary(p))
             continue
         if "synthetic: true" not in text:
             findings.append(f"{p}: missing synthetic marker")

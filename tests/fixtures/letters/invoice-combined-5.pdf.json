@@ -1,0 +1,13 @@
+{
+  "amount": "271.94",
+  "currency": "EUR",
+  "date": "2031-09-30",
+  "deadline": "2031-10-21",
+  "doc_type": "invoice",
+  "file": "invoice-combined-5.pdf",
+  "marker": "synthetic: true",
+  "seed": 5,
+  "sender": "Beispielwerke AG",
+  "sha256": "ad0a523b3f0b598af61b67baa0139667d1c62e0b085f262b1deaea8c3f82d9eb",
+  "variant": "combined"
+}

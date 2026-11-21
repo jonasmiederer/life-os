@@ -1,0 +1,13 @@
+{
+  "amount": "616.69",
+  "currency": "EUR",
+  "date": "2030-09-01",
+  "deadline": "2030-09-15",
+  "doc_type": "invoice",
+  "file": "invoice-rotated-3.png",
+  "marker": "synthetic: true",
+  "seed": 3,
+  "sender": "Demo Dienste GmbH",
+  "sha256": "76bd2d35a20d947cae23991e4bd162fa4c2617d5fae4e2a4f8bc25eb6fddd48d",
+  "variant": "rotated"
+}

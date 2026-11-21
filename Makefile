@@ -1,4 +1,4 @@
-.PHONY: privacy-scan install-hooks lint types unit security fixtures evals-det
+.PHONY: fixtures-regen privacy-scan install-hooks lint types unit security fixtures evals-det
 
 # Full local gate. Run before the first push and before each release tag.
 privacy-scan:
@@ -27,6 +27,11 @@ security:
 fixtures:
 	python3 scripts/check_fixtures_clean.py tests/fixtures
 	python3 scripts/check_permissions_lock.py
+
+# Regenerates the committed synthetic letter images and sidecars (deterministic).
+fixtures-regen:
+	rm -rf tests/fixtures/letters
+	python3 -m tests.fixturegen.images tests/fixtures/letters
 
 evals-det:
 	python3 -m evals.det.run
