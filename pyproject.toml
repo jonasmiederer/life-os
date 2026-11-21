@@ -27,7 +27,7 @@ dev = [
     "pyyaml==6.0.3",
     "types-PyYAML==6.0.12.20260408",
 ]
-sast = ["bandit==1.9.4", "semgrep==1.163.0"]
+sast = ["bandit==1.9.4", "semgrep==1.186.0"]
 deps = ["pip-audit==2.10.0"]
 workflow = ["zizmor==1.26.0"]
 
