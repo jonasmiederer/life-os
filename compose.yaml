@@ -80,10 +80,48 @@ services:
       timeout: 5s
       retries: 5
 
+  # Mail watcher (design 2.14). Reads one IMAP folder, writes only inbox/. No send path in the code.
+  # Shortcut (v1): Docker cannot limit egress to one host, so this service has an open outbound
+  # network. The IMAP host is config. A firewall or egress proxy is a later work item.
+  ingest-mail:
+    build: .
+    image: lifeos-core:dev
+    entrypoint: ["python", "-m", "core.mailwatch"]
+    profiles: ["mail"]  # off until the owner sets up the mailbox: docker compose --profile mail up
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+    cpus: 0.5
+    restart: on-failure:5
+    environment:
+      LIFEOS_DATA_DIR: /data
+      LIFEOS_NTFY_URL: http://ntfy:8080
+      LIFEOS_MAIL_PASSWORD_FILE: /run/secrets/mail_password
+      LIFEOS_MAIL_IMAP_HOST: ${LIFEOS_MAIL_IMAP_HOST:-}
+      LIFEOS_MAIL_USER: ${LIFEOS_MAIL_USER:-}
+      LIFEOS_MAIL_INGEST_ADDRESS: ${LIFEOS_MAIL_INGEST_ADDRESS:-}
+      LIFEOS_MAIL_AUTHSERV_ID: ${LIFEOS_MAIL_AUTHSERV_ID:-}
+      LIFEOS_MAIL_ALLOWED_FROM: ${LIFEOS_MAIL_ALLOWED_FROM:-}
+      LIFEOS_MAIL_ALLOWED_DOMAINS: ${LIFEOS_MAIL_ALLOWED_DOMAINS:-}
+      LIFEOS_MAIL_FOLDER: ${LIFEOS_MAIL_FOLDER:-INBOX}
+      LIFEOS_MAIL_PROCESSED: ${LIFEOS_MAIL_PROCESSED:-Processed}
+      LIFEOS_MAIL_REJECTED: ${LIFEOS_MAIL_REJECTED:-Rejected}
+    secrets: [mail_password]
+    volumes:
+      - ${LIFEOS_DATA_DIR:-./data}/inbox:/data/inbox
+    tmpfs:
+      - /tmp
+    networks: [internal, mailout]  # internal: ntfy only. mailout: the IMAP server.
+
 # Shortcut: web has an internet route until the gateway work item adds an egress-deny proxy.
 # web picks the Kiro backend only when a key and LIFEOS_KIRO_MODEL are set (else no cloud call).
 # The image has no kiro-cli yet: a key without it fails per call as BackendUnavailable.
 secrets:
+  mail_password:
+    file: ${LIFEOS_MAIL_PASSWORD_FILE:-./secrets/mail_password}
   web_password_hash:
     file: ${LIFEOS_WEB_PASSWORD_HASH_FILE:-./secrets/web_password_hash}
 
@@ -91,3 +129,4 @@ networks:
   internal:
     internal: true
   edge: {}
+  mailout: {}
