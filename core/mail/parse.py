@@ -201,10 +201,14 @@ _SUBJ_KEYS = {"betreff", "subject"}
 _QUOTE = re.compile(r"^[\s>]*")
 _BEGIN = re.compile(
     r"^[\s>*_-]*(anfang der weitergeleiteten (e-)?mail|begin forwarded message|"
-    r"-+\s*(forwarded message|weitergeleitete nachricht)).*$",
+    r"forwarded message|weitergeleitete nachricht)",
     re.I,
 )
 MAX_SCAN_LINES = 3000
+# A line that starts with "--", is short and is not a quoted-printable soft break.
+_BOUNDARY_LINE = re.compile(rb"\n--[^\r\n]{0,200}(?<!=)\r?\n")
+MAX_LINE_CHARS = 500  # longer lines are never header lines, and skipping them bounds regex time
+MAX_BOUNDARIES = MAX_PARTS * 4
 _BLOCK_SPAN = 8
 
 
@@ -212,13 +216,13 @@ def parse_inline_block(text: str) -> tuple[dict[str, str], str] | None:
     """Find a quoted "Von:/Datum:/Betreff:" block. Returns (headers, text after the block)."""
     lines = text.splitlines()[:MAX_SCAN_LINES]
     for i, line in enumerate(lines):
-        m = _KEY.match(line)
+        m = _KEY.match(line) if len(line) <= MAX_LINE_CHARS else None
         if not m or m[1].lower() not in _FROM_KEYS:
             continue
         found = {"from": m[2]}
         end = i
         for j in range(i + 1, min(i + 1 + _BLOCK_SPAN, len(lines))):
-            n = _KEY.match(lines[j])
+            n = _KEY.match(lines[j]) if len(lines[j]) <= MAX_LINE_CHARS else None
             if n is None:
                 if lines[j].strip(" >*\t") == "":
                     continue
@@ -236,7 +240,9 @@ def parse_inline_block(text: str) -> tuple[dict[str, str], str] | None:
 
 
 def _strip_begin_marker(text: str) -> str:
-    return "\n".join(ln for ln in text.splitlines() if not _BEGIN.match(ln))
+    return "\n".join(
+        ln for ln in text.splitlines() if len(ln) > MAX_LINE_CHARS or not _BEGIN.match(ln)
+    )
 
 
 def _text_of(col: _Collected) -> str:
@@ -265,6 +271,10 @@ def parse_mail(data: bytes, received: date) -> ParsedMail:
     """
     if len(data) > MAX_MAIL_BYTES:
         raise MailRejected("too_large")
+    if (
+        len(_BOUNDARY_LINE.findall(data)) > MAX_BOUNDARIES
+    ):  # cheap guard: the parser builds every part first
+        raise MailRejected("too_complex")
     try:
         outer = BytesParser(policy=_POLICY).parsebytes(data)
         budget = _Budget()

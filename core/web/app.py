@@ -194,7 +194,9 @@ class WebApp:
             draft = load_draft(self.root, slug)
         except ReviewError:
             return self._html("404 Not Found", pages.error_page("Nicht gefunden."))
-        return self._html(status, pages.review_page(csrf, slug, draft.meta, draft.file, error))
+        return self._html(
+            status, pages.review_page(csrf, slug, draft.meta, draft.file, error, draft.text)
+        )
 
     def _confirm(self, environ: dict[str, Any], slug: str, csrf: str) -> _Response:
         raw = parse_qs(self._body(environ).decode("utf-8", "replace"))

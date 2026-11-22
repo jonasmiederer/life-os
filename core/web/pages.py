@@ -98,11 +98,16 @@ def _val(meta: dict[str, object], key: str) -> str:
     return "" if value is None else escape(str(value), quote=True)
 
 
-def review_page(csrf: str, slug: str, meta: dict[str, object], file: str, error: str = "") -> bytes:
+MAIL_TEXT_CHARS = 5000
+
+
+def review_page(
+    csrf: str, slug: str, meta: dict[str, object], file: str, error: str = "", text: str = ""
+) -> bytes:
     msg = f'<p class="err">{escape(error)}</p>' if error else ""
     url = f"/{escape(file)}"
     if file.endswith(".eml"):
-        shown = "<p>Nur Text aus der Mail. Das Original wird nicht angezeigt.</p>"
+        shown = "<p>Das Original der Mail wird nicht angezeigt.</p>"
     elif file.endswith(".pdf"):
         shown = f'<p><a href="{url}">PDF öffnen</a></p>'
     else:
@@ -111,7 +116,12 @@ def review_page(csrf: str, slug: str, meta: dict[str, object], file: str, error:
         f'<option value="{k}"{" selected" if k == meta.get("type") else ""}>{v}</option>'
         for k, v in _TYPE_LABELS.items()
     )
-    source = "<p>Quelle: Mail</p>" if meta.get("source") == "mail" else ""
+    source = ""
+    if meta.get("source") == "mail":
+        source = "<p>Quelle: Mail</p>"
+        if meta.get("forward") == "inline":
+            source += "<p>Absender/Datum nicht gesichert (normale Weiterleitung).</p>"
+        shown += f"<pre>{escape(text[:MAIL_TEXT_CHARS])}</pre>"
     form = (
         f'{msg}{source}<form method="post" action="/review/{escape(slug)}/confirm">'
         f'<input type="hidden" name="csrf" value="{escape(csrf)}">'

@@ -19,15 +19,16 @@ STATUSES = {"draft", "confirmed", "done"}
 SOURCES = {"upload", "folder", "mail"}
 EXTRACTORS = {"cloud", "tesseract", "text"}
 FORWARDS = {"attached", "inline"}
+CLASSES = {"allow", "block", "local"}
 
 SLUG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9-]{1,60}-[a-z0-9_]+-[0-9a-f]{8}$")
 FROM_RE = re.compile(r"^[\w .,&@'()/-]{1,120}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 NOTE_REQUIRED = {"type", "from", "date", "status", "source", "raw"}
-NOTE_OPTIONAL = {"deadline", "deadline_kind", "amount", "snooze", "forward"}
+NOTE_OPTIONAL = {"deadline", "deadline_kind", "amount", "snooze", "forward", "class"}
 RAW_REQUIRED = {"file", "sha256", "pages", "extractor", "model_id"}
-RAW_OPTIONAL = {"mail_sha256"}
+RAW_OPTIONAL = {"mail_sha256", "class"}
 
 
 class ValidationError(ValueError):
@@ -93,6 +94,8 @@ def validate_note(path: Path, data_dir: Path, stem: str | None = None) -> list[s
         codes.append("bad_enum:status")
     if meta["source"] not in SOURCES:
         codes.append("bad_enum:source")
+    if meta.get("class") is not None and meta["class"] not in CLASSES:
+        codes.append("bad_enum:class")
     if meta.get("forward") is not None and meta["forward"] not in FORWARDS:
         codes.append("bad_enum:forward")
     kind = meta.get("deadline_kind") or "none"
@@ -142,6 +145,8 @@ def validate_raw(path: Path) -> list[str]:
         codes.append("bad_value:sha256")
     if not isinstance(meta["pages"], int) or isinstance(meta["pages"], bool) or meta["pages"] < 1:
         codes.append("bad_value:pages")
+    if meta.get("class") is not None and meta["class"] not in CLASSES:
+        codes.append("bad_enum:class")
     if "mail_sha256" in meta and not (
         isinstance(meta["mail_sha256"], str) and SHA_RE.match(meta["mail_sha256"])
     ):

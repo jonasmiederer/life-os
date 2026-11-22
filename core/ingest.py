@@ -181,7 +181,9 @@ def _ingest(
 
     received = clock.now().date()
     doc_date = fields.doc_date or received
-    slug = f"{doc_date.isoformat()}-{slugify(fields.sender)}-{fields.doc_type}-{sha[:8]}"
+    # sender part <= 25 chars keeps the slug <= 64 chars (log field limit)
+    who = slugify(fields.sender)[:25].strip("-") or "unbekannt"
+    slug = f"{doc_date.isoformat()}-{who}-{fields.doc_type}-{sha[:8]}"
     note_meta: dict[str, Any] = {
         "type": fields.doc_type,
         "from": fields.sender,
@@ -192,6 +194,7 @@ def _ingest(
     }
     if mail:
         note_meta["forward"] = mail.forward
+        note_meta["class"] = "local"  # mail drafts stay local until a later confirm step exists
     if fields.deadline:
         note_meta["deadline"] = fields.deadline
         note_meta["deadline_kind"] = fields.deadline_kind
@@ -206,6 +209,7 @@ def _ingest(
     }
     if mail:
         raw_meta["mail_sha256"] = mail.sha256
+        raw_meta["class"] = "local"
     raw_body = "".join(f"\n## Seite {p.number}\n\n{p.text}\n" for p in result.pages)
     body = note_body(fields, "Entwurf, bitte prüfen.")
     if mail:

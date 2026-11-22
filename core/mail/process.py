@@ -11,7 +11,8 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -27,11 +28,14 @@ from core.ingest import (
     ingest_upload,
     save_original,
 )
-from core.log import audit
+from core.log import LogError, audit
 from core.mail.parse import MAX_MAIL_BYTES, MailRejected, ParsedMail, parse_mail
 from core.ocr import OcrError, TesseractMissing, ocr_file
 
-MAX_PER_RUN = 50
+MAX_PER_RUN = 5  # OCR is slow and runs inside the scheduler tick
+TIME_BUDGET_SECONDS = 300
+BODY_NOTE_MIN_CHARS = 200
+MIN_IMAGE_BYTES = 10_000  # smaller images are signature logos
 MAX_SIDECAR_BYTES = 64 * 1024
 _ID_JSON = re.compile(r"^([0-9a-f]{64})\.json$")
 _TAG_TYPE = {"tax": "steuerbescheid", "contract": "kuendigung_vertrag"}  # hints, owner reviews
@@ -95,38 +99,64 @@ def _origin(mail: ParsedMail, mail_sha: str, tag: str | None, today: date) -> Ma
     return MailOrigin(mail_sha, mail.forward, fields, tuple(mail.notes))
 
 
+def _usable(blobs: list[bytes]) -> tuple[list[bytes], int]:
+    """Drop tiny images (signature logos). PDFs are always kept."""
+    keep = [b for b in blobs if b.startswith(b"%PDF-") or len(b) >= MIN_IMAGE_BYTES]
+    return keep, len(blobs) - len(keep)
+
+
 def _one(
     root: Path, mail_id: str, eml: bytes, side: dict[str, Any], backend: Backend | None,
     ocr: OcrFn, clock: Any, summary: Summary,
-) -> None:  # fmt: skip
+) -> int:  # fmt: skip
+    """Write the notes of one mail. Returns how many new notes it made."""
     today = clock.now().date()
     mail = parse_mail(eml, _received(side, today))
+    blobs, logos = _usable(mail.attachments)
+    skipped = mail.dropped + logos
+    body = len(mail.text.strip()) > BODY_NOTE_MIN_CHARS or not blobs
     origin = _origin(mail, mail_id, side.get("plus_tag"), _received(side, today))
+    rule = ["Regel: pro Anhang eine Notiz; der Mail-Text ist eine eigene Notiz ab 200 Zeichen."]
+    if skipped:
+        rule.append(f"{skipped} Anhänge nicht verarbeitet (Typ, Größe oder Logo).")
     results = []
-    if mail.attachments:
-        save_original(root, eml, "eml")
-        for blob in mail.attachments:
-            try:
-                results.append(
-                    ingest_upload(root, blob, PrivacyClass.LOCAL, backend=backend, ocr=ocr,
-                                  clock=clock, mail=origin)
-                )  # fmt: skip
-            except (UnsupportedFile, OcrError) as exc:
-                if isinstance(exc, TesseractMissing):
-                    raise
-        if not results:
-            raise MailRejected("attachments_unreadable")
-    elif mail.text.strip():
+    failed = 0
+    if skipped:
+        audit(root, "mail.attachment_skipped", clock.now(), id=mail_id, count=skipped)
+    with_lines = replace(origin, lines=origin.lines + tuple(rule))
+    for blob in blobs:
+        try:
+            results.append(
+                ingest_upload(root, blob, PrivacyClass.LOCAL, backend=backend, ocr=ocr,
+                              clock=clock, mail=with_lines)
+            )  # fmt: skip
+        except TesseractMissing:
+            raise
+        except (UnsupportedFile, OcrError):
+            failed += 1
+    if failed:
+        audit(root, "mail.attachment_skipped", clock.now(), id=mail_id, count=failed)
+    if blobs and not results and not body:
+        raise MailRejected("attachments_unreadable")
+    if results:
+        save_original(root, eml, "eml")  # only after the first note succeeded
+    if body and mail.text.strip():
+        lines = origin.lines + tuple(rule)
+        if failed:
+            lines += (f"{failed} weitere Anhänge nicht lesbar.",)
         results.append(
             ingest_text(root, mail.text, eml, "eml", PrivacyClass.LOCAL, backend=backend,
-                        clock=clock, mail=origin)
+                        clock=clock, mail=replace(origin, lines=lines))
         )  # fmt: skip
-    else:
+    if not results:
         raise MailRejected("empty")
+    new = 0
     for res in results:
         summary.duplicates += res.duplicate
         summary.notes += not res.duplicate
         summary.backend_calls += res.backend_calls
+        new += not res.duplicate
+    return new
 
 
 def process_inbox(
@@ -141,7 +171,10 @@ def process_inbox(
     inbox = root / "inbox"
     summary = Summary()
     ids = sorted(m[1] for p in inbox.glob("*.json") if (m := _ID_JSON.match(p.name)))
+    started = time.monotonic()
     for mail_id in ids[:MAX_PER_RUN]:
+        if time.monotonic() - started > TIME_BUDGET_SECONDS:
+            break
         eml_path = inbox / f"{mail_id}.eml"
         try:
             if not eml_path.exists() and (inbox / "done" / f"{mail_id}.eml").exists():
@@ -150,17 +183,20 @@ def process_inbox(
                 continue
             eml = _read_regular(eml_path, MAX_MAIL_BYTES)
             side = _sidecar(inbox, mail_id, eml)
-            _one(root, mail_id, eml, side, backend, ocr, clock, summary)
+            count = _one(root, mail_id, eml, side, backend, ocr, clock, summary)
         except TesseractMissing:
-            summary.waiting = True
-            break
-        except (MailRejected, UnsupportedFile, OSError) as exc:
-            code = exc.args[0] if isinstance(exc, MailRejected) else type(exc).__name__.lower()
+            summary.waiting = True  # leave in inbox/ and go on: text-only mails need no OCR
+            continue
+        except (MailRejected, UnsupportedFile, OSError, LogError) as exc:
+            if isinstance(exc, MailRejected):
+                code = exc.args[0]
+            else:
+                code = "log" if isinstance(exc, LogError) else type(exc).__name__.lower()
             audit(root, "mail.rejected", clock.now(), id=mail_id, code=str(code)[:40])
             _move(inbox, mail_id, "rejected")
             summary.rejected += 1
             continue
         _move(inbox, mail_id, "done")
         summary.done += 1
-        audit(root, "mail.done", clock.now(), id=mail_id, count=summary.notes)
+        audit(root, "mail.done", clock.now(), id=mail_id, count=count)
     return summary

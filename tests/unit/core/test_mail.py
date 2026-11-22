@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import io
+import subprocess
 import time
 import zipfile
 from datetime import date
@@ -18,7 +19,7 @@ from pytest import fixture
 from core.clock import FakeClock
 from core.datadir import init_data_dir
 from core.gateway.fake import FakeBackend
-from core.mail.parse import clean_sender, parse_date, parse_mail
+from core.mail.parse import MailRejected, clean_sender, parse_date, parse_mail
 from core.mail.process import process_inbox
 from core.ocr import OcrResult, PageText, TesseractMissing
 from core.schema import read_note, validate_note, validate_raw
@@ -27,7 +28,21 @@ from tests.fixturegen import mail as mf
 
 parametrize = pytest.mark.parametrize
 LETTERS = Path(__file__).parents[2] / "fixtures" / "letters"
-PNG = (LETTERS / "invoice-clean-1.png").read_bytes()
+LOGO = (LETTERS / "invoice-clean-1.png").read_bytes()  # under 10 kB: counts as a logo
+
+
+def _noise_png() -> bytes:
+    import random
+
+    from PIL import Image
+
+    img = Image.frombytes("RGB", (120, 120), random.Random(1).randbytes(120 * 120 * 3))  # noqa: S311
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
+PNG = _noise_png()
 TODAY = date(2026, 3, 4)
 
 
@@ -361,3 +376,108 @@ def test_cli_mail_process(root: Path, capsys: pytest.CaptureFixture[str]) -> Non
     mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK))
     assert main(["--data-dir", str(root), "mail", "process"]) == 0
     assert "done=1 rejected=0 notes=1" in capsys.readouterr().out
+
+
+def test_long_german_sender_keeps_slug_short_and_commits(root: Path) -> None:
+    long_name = "Techniker Krankenkasse Servicecenter Süd <a@example.com>"
+    block = mf.DE_BLOCK.replace("Beispielwerke <billing@example.com>", long_name)
+    mf.write_pair(root / "inbox", mf.forward_inline(block))
+    assert _run(root).notes == 1
+    (note,) = _notes(root)
+    assert len(note.stem) <= 64 and validate_note(note, root) == []
+    git = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                         capture_output=True, text=True, check=True)  # fmt: skip
+    assert "notes/" not in git.stdout
+
+
+def test_log_error_rejects_with_code_log(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.log import LogError
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise LogError("x")
+
+    monkeypatch.setattr("core.mail.process.ingest_text", boom)
+    sha = mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK))
+    assert _run(root).rejected == 1
+    assert (root / "inbox" / "rejected" / f"{sha}.json").is_file()
+    assert "log" in "".join(p.read_text() for p in (root / "audit").glob("*.jsonl"))
+
+
+def test_mail_notes_record_class_local(root: Path) -> None:
+    mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK, ((PDF, "pdf", "r.pdf"),)))
+    _run(root)
+    for note in _notes(root):
+        assert read_note(note)[0]["class"] == "local"
+        assert read_note(root / "raw" / note.name)[0]["class"] == "local"
+
+
+def test_long_body_is_its_own_note_and_logo_is_skipped(root: Path) -> None:
+    long_text = mf.DE_BLOCK + "Zahlungserinnerung. " * 30
+    eml = mf.forward_inline(long_text, ((PDF, "pdf", "r.pdf"), (LOGO, "octet-stream", "logo.png")))
+    mf.write_pair(root / "inbox", eml)
+    res = _run(root)
+    assert res.notes == 2  # PDF note and body note, no logo note
+    bodies = [read_note(n)[1] for n in _notes(root)]
+    assert all("1 Anhänge nicht verarbeitet" in b and "Regel:" in b for b in bodies)
+    audit_text = "".join(p.read_text() for p in (root / "audit").glob("*.jsonl"))
+    assert "mail.attachment_skipped" in audit_text
+
+
+def test_short_body_with_attachment_gives_no_body_note(root: Path) -> None:
+    mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK, ((PDF, "pdf", "r.pdf"),)))
+    assert _run(root).notes == 1
+
+
+def test_tesseract_missing_does_not_block_text_only_mails(root: Path) -> None:
+    pdf_sha = mf.write_pair(
+        root / "inbox", mf.forward_inline(mf.DE_BLOCK, ((PDF, "pdf", "r.pdf"),))
+    )
+    text_sha = mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK + "Anderer Text"))
+
+    def missing(_p: Path) -> OcrResult:
+        raise TesseractMissing("x")
+
+    res = process_inbox(root, ocr=missing, clock=FakeClock())
+    assert res.waiting and res.done == 1
+    assert (root / "inbox" / f"{pdf_sha}.json").is_file()
+    assert (root / "inbox" / "done" / f"{text_sha}.json").is_file()
+    assert not (root / "files" / f"{pdf_sha}.eml").exists()  # no orphan original
+
+
+def test_tick_cap_is_five_mails(root: Path) -> None:
+    for i in range(7):
+        mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK + f"Mail {i}"))
+    assert _run(root).done == 5
+
+
+def test_review_page_shows_mail_text_and_inline_warning(root: Path) -> None:
+    from core.review import load_draft
+    from core.web.pages import review_page
+
+    mf.write_pair(root / "inbox", mf.forward_inline(mf.DE_BLOCK.replace("Guten Tag", "<b>Hi</b>")))
+    _run(root)
+    draft = load_draft(root, _notes(root)[0].stem)
+    html = review_page("t", "s", draft.meta, draft.file, text=draft.text).decode()
+    assert "Quelle: Mail" in html and "nicht gesichert" in html
+    assert "<pre>" in html and "&lt;b&gt;Hi" in html and "<b>Hi" not in html
+
+
+# --- parser limits -----------------------------------------------------------------------------
+def test_long_dash_line_is_fast() -> None:
+    body = "Anfang der weitergeleiteten E-Mail:\n" + "-" * 190_000 + "x\n" + mf.DE_BLOCK
+    start = time.monotonic()
+    mail = parse_mail(mf.forward_inline(body), TODAY)
+    assert time.monotonic() - start < 2 and mail.sender == "Beispielwerke"
+
+
+def test_million_parts_rejected_fast_and_small() -> None:
+    import resource
+
+    head = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n"
+    eml = head + b"--b\r\nContent-Type: text/plain\r\n\r\n\r\n" * 400_000
+    before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    start = time.monotonic()
+    with pytest.raises(MailRejected, match="too_complex"):
+        parse_mail(eml, TODAY)
+    assert time.monotonic() - start < 2
+    assert resource.getrusage(resource.RUSAGE_SELF).ru_maxrss - before < 100_000_000
