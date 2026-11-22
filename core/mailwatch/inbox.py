@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,8 @@ SIDECAR_VERSION = 1
 
 def _write_atomic(path: Path, data: bytes) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, MODE)
+    tmp.unlink(missing_ok=True)  # removes a stale file or a planted symlink, never its target
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, MODE)
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
@@ -41,6 +43,26 @@ def write_pair(inbox: Path, mail_id: str, raw: bytes, sidecar: dict[str, Any]) -
     _write_atomic(inbox / f"{mail_id}.json", body)
 
 
+def _valid(d: Any) -> bool:
+    """Type check of a loaded state file. Anything odd means: ignore the file."""
+    if not isinstance(d, dict):
+        return False
+    strs = ("accept_day", "cap_alert_day", "login_alert_day", "next_try")
+    seen, counts = d.get("seen", []), d.get("reject_counts", {})
+    ok = isinstance(seen, list) and all(isinstance(x, str) for x in seen)
+    ok = ok and isinstance(counts, dict)
+    ok = ok and all(isinstance(k, str) and type(v) is int for k, v in counts.items())
+    ok = ok and all(type(d.get(k, 0)) is int for k in ("accepted", "login_failures"))
+    ok = ok and all(isinstance(d.get(k, ""), str) for k in strs)
+    if ok and d.get("next_try"):
+        try:
+            if datetime.fromisoformat(d["next_try"]).tzinfo is None:
+                return False
+        except ValueError:
+            return False
+    return ok
+
+
 class State:
     """Small JSON file `inbox/.state`. Dedupe hashes, daily counters, backoff, alert days."""
 
@@ -58,10 +80,10 @@ class State:
         }
         try:
             loaded = json.loads(self.path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                self.data.update(loaded)
         except (OSError, ValueError):
-            pass  # first run, or damaged: start empty. Worst case is a duplicate that M2 dedupes.
+            loaded = None  # first run, or damaged: start empty (worst case: a duplicate M2 dedupes)
+        if _valid(loaded):
+            self.data.update(loaded)
         self._seen = set(self.data["seen"])
 
     def seen(self, mail_id: str) -> bool:

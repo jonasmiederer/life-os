@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import ssl
 import stat
+import time
+import tracemalloc
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from core.mailwatch import inbox as inbox_mod
-from core.mailwatch.config import MailConfig
+from core.mailwatch.config import ConfigError, MailConfig
 from core.mailwatch.watcher import OpsError, Watcher
 from tests.unit.mailwatch.conftest import (
     AUTHSERV,
@@ -76,10 +80,6 @@ REJECTS = {
         dict(ar=[f"{AUTHSERV}; dkim=fail (dkim=pass header.d=example.com); dmarc=pass"]),
         "auth_dkim",
     ),
-    "misaligned": (
-        dict(ar=[f"{AUTHSERV}; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=x@example.org; dmarc=fail"]),  # noqa: E501
-        "auth_align",
-    ),
     "from_not_allowed": (dict(sender="stranger@example.com"), "from_not_allowed"),
     "two_from": (dict(extra=["From: owner@example.com"]), "from_invalid"),
     "no_dkim_method": (dict(ar=[f"{AUTHSERV}; spf=pass smtp.mailfrom=owner@example.com; dmarc=pass"]), "auth_dkim"),  # noqa: E501
@@ -100,17 +100,127 @@ def test_reject_writes_nothing(
     assert server.box("Rejected") == [raw] and server.box("Processed") == []
 
 
-def test_topmost_real_header_wins_over_forged_below(
+def test_two_headers_with_our_id_are_rejected_even_if_provider_one_is_on_top(
     server: FakeImap, cfg: MailConfig, make_watcher: Make
 ) -> None:
     server.add(build(ar=[GOOD_AR, FAIL]))
-    assert make_watcher().run_once().accepted == 1
+    res = make_watcher().run_once()
+    assert (res.accepted, res.rejected) == (0, 1) and files(cfg) == []
 
 
-def test_spf_aligned_without_dmarc_is_enough(server: FakeImap, make_watcher: Make) -> None:
-    ar = f"{AUTHSERV}; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=bounce@example.com"
+def test_dkim_domain_must_align_with_from_or_dmarc_must_pass(
+    server: FakeImap, cfg: MailConfig, certs: tuple[Path, Path], clock: Clock
+) -> None:
+    other = replace(
+        cfg,
+        allowed_from=frozenset({"owner@example.org"}),
+        allowed_domains=frozenset({"example.com"}),
+    )
+    ctx = ssl.create_default_context(cafile=str(certs[0]))
+    ar_no_dmarc = f"{AUTHSERV}; dkim=pass header.d=example.com; dmarc=fail"
+    ar_dmarc = f"{AUTHSERV}; dkim=pass header.d=example.com; dmarc=pass"
+    server.add(build(sender="owner@example.org", ar=[ar_no_dmarc], body="a"))
+    server.add(build(sender="owner@example.org", ar=[ar_dmarc], body="b"))
+    res = Watcher(other, now=clock, ssl_context=ctx).run_once()
+    assert (res.accepted, res.rejected) == (1, 1)
+
+
+def test_spf_only_path_is_gone(server: FakeImap, cfg: MailConfig, make_watcher: Make) -> None:
+    ar = f"{AUTHSERV}; dkim=fail header.d=example.com; spf=pass smtp.mailfrom=owner@example.com"
     server.add(build(ar=[ar]))
+    assert make_watcher().run_once().rejected == 1
+
+
+def test_boundary_bomb_after_good_auth_stays_small(
+    server: FakeImap, cfg: MailConfig, certs: tuple[Path, Path], clock: Clock
+) -> None:
+    big = replace(cfg, max_bytes=10 * 1024 * 1024)
+    mp = 'Content-Type: multipart/mixed; boundary="b"\r\n\r\n' + "--b\n\n" * 1_500_000
+    raw = build(multipart=mp)
+    assert 7_000_000 < len(raw) < 8_000_000
+    server.add(raw)
+    ctx = ssl.create_default_context(cafile=str(certs[0]))
+    w = Watcher(big, now=clock, ssl_context=ctx)
+    tracemalloc.start()
+    try:
+        res = w.run_once()
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert res.rejected == 1 and files(cfg) == []
+    assert peak < 100 * 1024 * 1024  # container limit is 256m; the old tree needed ~500m
+
+
+def test_unauthenticated_bomb_is_rejected_on_headers_alone(
+    server: FakeImap, cfg: MailConfig, make_watcher: Make
+) -> None:
+    mp = 'Content-Type: multipart/mixed; boundary="b"\r\n\r\n' + "--b\n\n" * 15_000
+    server.add(build(sender="stranger@example.com", multipart=mp))
+    assert make_watcher().run_once().rejected == 1
+    assert server.srv.body_fetches == 0
+
+
+def test_partial_fetch_caps_bytes_even_if_size_lies(
+    server: FakeImap, cfg: MailConfig, make_watcher: Make
+) -> None:
+    server.srv.size_lie = 10
+    server.add(build(body="x" * 150_000))
+    assert make_watcher().run_once().rejected == 1
+    assert server.srv.max_sent <= cfg.max_bytes + 1
+
+
+def test_hostile_uid_list_is_filtered(server: FakeImap, make_watcher: Make) -> None:
+    server.srv.search_extra = "1:* ) x"
+    server.add(build())
     assert make_watcher().run_once().accepted == 1
+
+
+def test_stalling_server_hits_the_pass_deadline(
+    server: FakeImap, cfg: MailConfig, certs: tuple[Path, Path], clock: Clock
+) -> None:
+    server.srv.stall = 4.0
+    ctx = ssl.create_default_context(cafile=str(certs[0]))
+    w = Watcher(replace(cfg, pass_seconds=1), now=clock, ssl_context=ctx)
+    start = time.monotonic()
+    assert w.run_once().status == "deadline"
+    assert time.monotonic() - start < 3.5
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"seen": [[1]]},
+        {"accepted": "x"},
+        {"next_try": "zz"},
+        {"next_try": "2026-01-01T00:00:00"},
+        {"reject_counts": []},
+        {"reject_counts": {"d": "x"}},
+        [],
+    ],
+)
+def test_damaged_state_falls_back(
+    bad: object, server: FakeImap, cfg: MailConfig, make_watcher: Make
+) -> None:
+    cfg.inbox.mkdir(parents=True)
+    (cfg.inbox / ".state").write_text(json.dumps(bad))
+    server.add(build())
+    assert make_watcher().run_once().accepted == 1
+
+
+def test_symlinked_tmp_is_not_followed(tmp_path: Path) -> None:
+    target = tmp_path / "victim"
+    target.write_text("keep")
+    (tmp_path / "ab.eml.tmp").symlink_to(target)
+    inbox_mod.write_pair(tmp_path, "ab", b"mail", {"v": 1})
+    assert target.read_text() == "keep" and (tmp_path / "ab.eml").read_bytes() == b"mail"
+
+
+def test_non_ascii_password_is_a_config_error(
+    server: FakeImap, cfg: MailConfig, make_watcher: Make
+) -> None:
+    cfg.password_file.write_text("p\u00e4ss\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        make_watcher().run_once()
 
 
 def test_huge_mail_rejected_without_download(

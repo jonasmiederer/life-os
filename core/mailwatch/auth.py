@@ -1,8 +1,9 @@
 """Decide whether a mail may enter (design 2.14, D20).
 
-Only the topmost Authentication-Results header whose authserv-id equals the configured one
-counts. Every other Authentication-Results header is ignored, so a header forged by the
-sender (above or beside the provider's) has no effect.
+Exactly one Authentication-Results header may carry the configured authserv-id. Two or more
+are rejected, because one of them may be forged. Headers with other ids are ignored. A header
+with a quote, backslash or unbalanced comment is rejected (`auth_parse`).
+DKIM must pass for an allowlisted `header.d` that is aligned with From, or DMARC must pass.
 
 shortcut: "aligned" is a suffix match, not the public-suffix organizational domain.
 Upgrade when the allowlisted domains are not the owner's own.
@@ -60,6 +61,17 @@ def parse_results(value: str, authserv_id: str) -> list[tuple[str, str, dict[str
     return out
 
 
+def _headers_for(msg: Message, authserv_id: str) -> list[str]:
+    out = []
+    for name, value in msg.items():
+        if name.lower() != "authentication-results":
+            continue
+        head = " ".join(str(value).split()).split(";", 1)[0]
+        if _COMMENT.sub(" ", head).split()[:1] == [authserv_id]:
+            out.append(str(value))
+    return out
+
+
 def _aligned(a: str, b: str) -> bool:
     return bool(a) and bool(b) and (a == b or a.endswith("." + b) or b.endswith("." + a))
 
@@ -89,30 +101,30 @@ def check(
         return AuthReject("from_not_allowed")
     from_domain = sender.rsplit("@", 1)[1]
 
-    results = None
-    for name, value in msg.items():
-        if name.lower() != "authentication-results":
-            continue
-        results = parse_results(str(value), authserv_id)
-        if results is not None:
-            break  # topmost match wins
+    matching = _headers_for(msg, authserv_id)
+    if not matching:
+        return AuthReject("auth_missing")
+    if len(matching) > 1:
+        return AuthReject("auth_multi")  # a second header with our id may be forged
+    value = matching[0]
+    if '"' in value or "\\" in value:
+        return AuthReject("auth_parse")  # quoted values can hide ';' and fake results
+    stripped = _strip_comments(value)
+    if "(" in stripped or ")" in stripped:
+        return AuthReject("auth_parse")
+    results = parse_results(value, authserv_id)
     if results is None:
         return AuthReject("auth_missing")
 
+    dmarc = next((r for m, r, _ in results if m == "dmarc" and r == "pass"), "")
     dkim_ok = any(
-        m == "dkim" and r == "pass" and p.get("header.d", "") in allowed_domains
+        m == "dkim"
+        and r == "pass"
+        and (d := p.get("header.d", "")) in allowed_domains
+        and (bool(dmarc) or _aligned(d, from_domain))
         for m, r, p in results
     )
     if not dkim_ok:
         return AuthReject("auth_dkim")
-    dmarc = next((r for m, r, _ in results if m == "dmarc" and r == "pass"), "")
-    spf_aligned = any(
-        m == "spf"
-        and r == "pass"
-        and _aligned(p.get("smtp.mailfrom", "").rsplit("@", 1)[-1], from_domain)
-        for m, r, p in results
-    )
-    if not dmarc and not spf_aligned:
-        return AuthReject("auth_align")
     spf = next((r for m, r, _ in results if m == "spf"), "none")
     return AuthOk(dkim="pass", dmarc=dmarc or "none", spf=spf, from_domain=from_domain)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import email
+import email.parser
 import email.policy
 from dataclasses import dataclass
 from email.message import Message
@@ -21,6 +22,30 @@ class MimeReject(Exception):
 class Structure:
     message_id: str | None
     attachments_dropped: int
+
+
+HEADER_CAP = 64 * 1024
+
+
+def header_block(data: bytes, cap: int = HEADER_CAP) -> bytes | None:
+    """Bytes before the first blank line, or None if there is none within `cap` bytes."""
+    ends = [i for i in (data.find(b"\r\n\r\n"), data.find(b"\n\n")) if i >= 0]
+    if not ends or min(ends) > cap:
+        return None
+    return data[: min(ends)]
+
+
+def parse_headers(head: bytes) -> Message:
+    """Parse the header block only. No body, no parts."""
+    try:
+        return email.parser.BytesHeaderParser(policy=email.policy.compat32).parsebytes(head)
+    except (RecursionError, ValueError, TypeError):
+        raise MimeReject("parse") from None
+
+
+def too_many_boundaries(raw: bytes, max_parts: int) -> bool:
+    """Cheap count before building the tree: every part needs a boundary line."""
+    return raw.count(b"\n--") > 2 * max_parts + 2
 
 
 def parse(raw: bytes) -> Message:

@@ -34,7 +34,8 @@ class MailConfig:
     rejected: str = "Rejected"
     port: int = 993  # TLS only. No plain-text port is supported.
     tag_header: str = "Delivered-To"
-    max_bytes: int = 20 * 1024 * 1024
+    max_bytes: int = 10 * 1024 * 1024
+    pass_seconds: int = 120
     max_parts: int = 50
     max_depth: int = 8
     daily_cap: int = 30
@@ -107,7 +108,8 @@ def load(env: Mapping[str, str]) -> MailConfig:
         processed=names["processed"],
         rejected=names["rejected"],
         tag_header=tag_header,
-        max_bytes=_int(env, "LIFEOS_MAIL_MAX_BYTES", 20 * 1024 * 1024, 1024, 200 * 1024 * 1024),
+        max_bytes=_int(env, "LIFEOS_MAIL_MAX_BYTES", 10 * 1024 * 1024, 1024, 200 * 1024 * 1024),
+        pass_seconds=_int(env, "LIFEOS_MAIL_PASS_SECONDS", 120, 5, 3600),
         max_parts=_int(env, "LIFEOS_MAIL_MAX_PARTS", 50, 1, 1000),
         max_depth=_int(env, "LIFEOS_MAIL_MAX_DEPTH", 8, 1, 50),
         daily_cap=_int(env, "LIFEOS_MAIL_DAILY_CAP", 30, 1, 1000),
@@ -125,4 +127,6 @@ def read_password(path: Path) -> str:
         raise ConfigError(f"cannot read password file: {type(exc).__name__}") from None
     if not value:
         raise ConfigError("password file is empty")
+    if not value.isascii():
+        raise ConfigError("password is not ASCII")
     return value

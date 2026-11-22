@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import imaplib
 import re
+import socket
 import ssl
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.message import Message
 
 from core.log import log_event
 from core.mailwatch import auth, inbox, mime
@@ -132,11 +135,24 @@ class Watcher:
             raise OpsError("tls") from None
         except OSError:
             raise OpsError("connect") from None
+        expired = threading.Event()
+
+        def _expire() -> None:
+            expired.set()
+            try:
+                conn.socket().shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        timer = threading.Timer(self.cfg.pass_seconds, _expire)
+        timer.daemon = True
+        timer.start()
         try:
             return self._talk(conn, password, now, today)
-        except (imaplib.IMAP4.error, OSError):
-            raise OpsError("imap") from None
+        except (imaplib.IMAP4.error, OSError, UnicodeError):
+            raise OpsError("deadline" if expired.is_set() else "imap") from None
         finally:
+            timer.cancel()
             try:
                 conn.logout()
             except Exception:  # noqa: BLE001, S110 - connection may already be gone
@@ -155,7 +171,11 @@ class Watcher:
         if typ != "OK":
             raise OpsError("select")
         typ, found = conn.uid("SEARCH", "ALL")
-        uids = found[0].split() if typ == "OK" and found and isinstance(found[0], bytes) else []
+        uids = (
+            [u for u in found[0].split() if u.isdigit()]
+            if typ == "OK" and found and isinstance(found[0], bytes)
+            else []
+        )
         result = RunResult()
         for i, uid in enumerate(uids):
             if i >= MAX_PER_RUN or self.state.data["accepted"] >= self.cfg.daily_cap:
@@ -181,33 +201,23 @@ class Watcher:
             raise OpsError("move_failed")
         self.state.save()
 
-    def _decide(
-        self, conn: imaplib.IMAP4_SSL, uid: str, now: datetime, result: RunResult
-    ) -> tuple[str, str]:
-        typ, data = conn.uid("FETCH", uid, "(RFC822.SIZE)")
-        m = (
-            _SIZE.search(b" ".join(d for d in data if isinstance(d, bytes)))
-            if typ == "OK"
-            else None
-        )
-        if m is None or int(m.group(1)) > self.cfg.max_bytes:
-            return self.cfg.rejected, "size"
-        typ, data = conn.uid("FETCH", uid, "(BODY.PEEK[])")
-        raw = data[0][1] if typ == "OK" and data and isinstance(data[0], tuple) else None
-        if not isinstance(raw, bytes) or len(raw) > self.cfg.max_bytes:
-            return self.cfg.rejected, "size"
-        mail_id = hashlib.sha256(raw).hexdigest()
-        if self.state.seen(mail_id):
-            result.duplicates += 1
-            log_event("mailwatch.duplicate", sha256=mail_id)
-            return self.cfg.processed, ""
+    def _fetch(self, conn: imaplib.IMAP4_SSL, uid: str, spec: str) -> bytes | None:
+        typ, data = conn.uid("FETCH", uid, spec)
+        if typ == "OK" and data and isinstance(data[0], tuple) and isinstance(data[0][1], bytes):
+            return data[0][1]
+        return None
+
+    def _gate(self, head_bytes: bytes) -> tuple[Message, auth.AuthOk] | str:
+        """Header-only checks. Returns the parsed headers and verdict, or a reject code."""
+        block = mime.header_block(head_bytes)
+        if block is None:
+            return "headers"
         try:
-            msg = mime.parse(raw)
-            struct = mime.structure(msg, max_parts=self.cfg.max_parts, max_depth=self.cfg.max_depth)
+            msg = mime.parse_headers(block)
         except mime.MimeReject as exc:
-            return self.cfg.rejected, exc.code
+            return exc.code
         if not mime.addressed_to(msg, self.cfg.ingest_address):
-            return self.cfg.rejected, "to_not_ingest"
+            return "to_not_ingest"
         verdict = auth.check(
             msg,
             authserv_id=self.cfg.authserv_id,
@@ -215,7 +225,49 @@ class Watcher:
             allowed_domains=self.cfg.allowed_domains,
         )
         if isinstance(verdict, auth.AuthReject):
-            return self.cfg.rejected, verdict.code
+            return verdict.code
+        return msg, verdict
+
+    def _decide(
+        self, conn: imaplib.IMAP4_SSL, uid: str, now: datetime, result: RunResult
+    ) -> tuple[str, str]:
+        rejected = self.cfg.rejected
+        typ, data = conn.uid("FETCH", uid, "(RFC822.SIZE)")
+        m = (
+            _SIZE.search(b" ".join(d for d in data if isinstance(d, bytes)))
+            if typ == "OK"
+            else None
+        )
+        if m is None or int(m.group(1)) > self.cfg.max_bytes:
+            return rejected, "size"
+        # Step 1: headers only. A rejected mail costs at most HEADER_CAP bytes, never a MIME walk.
+        head = self._fetch(conn, uid, f"(BODY.PEEK[HEADER]<0.{mime.HEADER_CAP}>)")
+        if head is None:
+            return rejected, "headers"
+        early = self._gate(head)
+        if isinstance(early, str):
+            return rejected, early
+        # Step 2: the whole mail, capped by a partial fetch. Checks run again on these bytes.
+        raw = self._fetch(conn, uid, f"(BODY.PEEK[]<0.{self.cfg.max_bytes + 1}>)")
+        if raw is None or len(raw) > self.cfg.max_bytes:
+            return rejected, "size"
+        mail_id = hashlib.sha256(raw).hexdigest()
+        if self.state.seen(mail_id):
+            result.duplicates += 1
+            log_event("mailwatch.duplicate", sha256=mail_id)
+            return self.cfg.processed, ""
+        gate = self._gate(raw)
+        if isinstance(gate, str):
+            return rejected, gate
+        head_msg, verdict = gate
+        if mime.too_many_boundaries(raw, self.cfg.max_parts):
+            return rejected, "parts"
+        try:
+            struct = mime.structure(
+                mime.parse(raw), max_parts=self.cfg.max_parts, max_depth=self.cfg.max_depth
+            )
+        except mime.MimeReject as exc:
+            return rejected, exc.code
         inbox.write_pair(
             self.cfg.inbox,
             mail_id,
@@ -226,7 +278,7 @@ class Watcher:
                 "sha256": mail_id,
                 "size": len(raw),
                 "received_at": now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "plus_tag": mime.plus_tag(msg, self.cfg.tag_header),
+                "plus_tag": mime.plus_tag(head_msg, self.cfg.tag_header),
                 "auth": {
                     "dkim": verdict.dkim,
                     "dmarc": verdict.dmarc,

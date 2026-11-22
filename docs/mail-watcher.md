@@ -27,16 +27,33 @@ It never deletes, never expunges, and has no SMTP code. A static test enforces b
 
 ## Accept rule
 
-All must hold:
+Checks run on the headers first. A mail that fails them is moved to the rejected folder after at most 64 KB
+of headers were fetched. No MIME tree is built for it. All must hold:
 
 1. Exactly one From, on the allowlist.
 2. Outer To or Delivered-To names the ingest address (a `+tag` is ignored).
-3. The topmost Authentication-Results header with the configured authserv-id shows
-   `dkim=pass` with `header.d` on the domain allowlist, and `dmarc=pass` or (`spf=pass` with an aligned From).
-   Other Authentication-Results headers are ignored.
-4. Size, part count and depth are within limits.
+3. Exactly one Authentication-Results header carries the configured authserv-id (two or more: `auth_multi`).
+   It has no quote, backslash or unbalanced comment (else `auth_parse`).
+   It shows `dkim=pass` for an allowlisted `header.d`, and either `header.d` is aligned with From or `dmarc=pass`.
+   SPF alone is not enough. Headers with other ids are ignored.
+4. Size, boundary count, part count and depth are within limits. The boundary count is checked before the tree is built.
 
 Plus-tags are optional hints. A mail without one is handled the same way.
+
+Limits (environment): `LIFEOS_MAIL_MAX_BYTES` (default 10 MiB, enforced with a partial fetch),
+`LIFEOS_MAIL_PASS_SECONDS` (default 120: one pass is cut off after this, then back-off).
+
+## Owner test before real use
+
+The code cannot tell whether your provider always adds its own Authentication-Results header.
+If it sometimes does not, a header forged by the sender with the same authserv-id would be the only one.
+Before enabling the service:
+
+1. From an outside account, send a mail to the ingest address that carries a forged
+   `Authentication-Results: <your authserv-id>; dkim=pass header.d=<allowed domain>; dmarc=pass` header.
+2. Look at the stored mail's full headers. There must be two headers with your id. (The watcher then rejects it as `auth_multi`.)
+3. Repeat from an account at the same provider, and from a mail that goes through a forwarding rule.
+   If any path shows only the forged header, do not enable the service.
 
 ## What the credential can reach
 
@@ -47,8 +64,23 @@ If your provider allows it, use a separate account for the ingest address
 
 ## Network
 
-v1 shortcut: Docker cannot limit egress to one host, so the service has an open outbound network.
-The service can only reach the IMAP host by config, but the network does not enforce that.
+v1 shortcut: Docker cannot limit egress to one host. The service has an open outbound network.
+It can reach any host and any port, including the provider's mail-sending ports.
+The only control against sending mail is that the watcher code has no send path (a static test checks the code).
+If the code were taken over, the credential could send mail. A firewall or egress proxy is a later work item.
+Use a separate account, and turn off sending for it if the provider allows.
+
+## Secret file
+
+The container runs as uid 10001 and must be able to read the file named by `LIFEOS_MAIL_PASSWORD_FILE`.
+On the host: `chown 10001 secrets/mail_password && chmod 0400 secrets/mail_password`.
+If it cannot be read, the watcher exits with `bad_secret` and compose restarts it only five times.
+The password must be ASCII.
+
+## Folder upkeep
+
+Nothing is deleted. The rejected and processed folders grow. Empty them by hand now and then.
+Rejected mail costs one small header fetch each. A pass handles at most 100 mails.
 
 ## Credential rotation
 

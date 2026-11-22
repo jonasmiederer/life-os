@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import socket
 import socketserver
 import ssl
 import threading
+import time
 from pathlib import Path
 
 
@@ -33,6 +35,8 @@ class _Handler(socketserver.StreamRequestHandler):
                     self._send(f"{tag} OK logged in")
                 else:
                     self._send(f"{tag} NO [AUTHENTICATIONFAILED] bad")
+            elif cmd == "SELECT" and srv.stall:
+                time.sleep(srv.stall)
             elif cmd == "SELECT":
                 srv.selects.append(args.strip('"'))
                 srv.selected = args.strip('"')
@@ -53,7 +57,7 @@ class _Handler(socketserver.StreamRequestHandler):
         sub = sub.upper()
         inbox = srv.boxes[srv.selected]
         if sub == "SEARCH":
-            self._send("* SEARCH " + " ".join(str(u) for u, _ in inbox))
+            self._send("* SEARCH " + " ".join([str(u) for u, _ in inbox] + [srv.search_extra]))
             self._send(f"{tag} OK done")
         elif sub == "FETCH":
             uid_s, _, items = rest.partition(" ")
@@ -61,12 +65,22 @@ class _Handler(socketserver.StreamRequestHandler):
             if raw is None:
                 self._send(f"{tag} OK done")
             elif "RFC822.SIZE" in items:
-                self._send(f"* 1 FETCH (UID {uid_s} RFC822.SIZE {len(raw)})")
+                self._send(f"* 1 FETCH (UID {uid_s} RFC822.SIZE {srv.size_lie or len(raw)})")
                 self._send(f"{tag} OK done")
             else:
-                srv.body_fetches += 1
-                self.wfile.write(f"* 1 FETCH (UID {uid_s} BODY[] {{{len(raw)}}}\r\n".encode())
-                self.wfile.write(raw + b")\r\n")
+                m = re.search(r"BODY\.PEEK\[(HEADER)?\](?:<0\.(\d+)>)?", items)
+                assert m, items
+                part = raw
+                if m.group(1):
+                    end = raw.find(b"\r\n\r\n")
+                    part = raw[: end + 4] if end >= 0 else raw
+                else:
+                    srv.body_fetches += 1
+                if m.group(2):
+                    part = part[: int(m.group(2))]
+                srv.max_sent = max(srv.max_sent, len(part))
+                self.wfile.write(f"* 1 FETCH (UID {uid_s} BODY[] {{{len(part)}}}\r\n".encode())
+                self.wfile.write(part + b")\r\n")
                 self._send(f"{tag} OK done")
         elif sub == "MOVE":
             uid_s, _, folder = rest.partition(" ")
@@ -106,6 +120,10 @@ class _Server(socketserver.ThreadingTCPServer):
         self.logins = 0
         self.body_fetches = 0
         self.move = True
+        self.stall = 0.0
+        self.size_lie = 0
+        self.max_sent = 0
+        self.search_extra = ""
         self.login_ok = True
 
     def get_request(self) -> tuple[socket.socket, tuple[str, int]]:

@@ -15,7 +15,7 @@ For each accepted mail, in `inbox/`:
 
 `<id>` is the lowercase hex sha256 of the raw `.eml` bytes.
 
-Mode `0600`, owner uid `10001`, on both sides.
+Mode `0600`, owner uid `10001`. The reader must run as uid 10001, or it cannot read the files.
 
 ## Write order (the sidecar is the commit marker)
 
