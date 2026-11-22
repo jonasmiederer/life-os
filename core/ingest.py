@@ -24,7 +24,7 @@ from core.gateway.interface import Backend, GatewayError, GatewayRequest, Privac
 from core.gateway.router import Gateway, intake_class
 from core.images import BadImage, clean_image, is_heic
 from core.log import audit
-from core.ocr import OcrResult, ocr_file
+from core.ocr import OcrResult, PageText, ocr_file
 from core.store import data_lock, write_note
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -82,6 +82,24 @@ def note_body(fields: DraftFields, header: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+@dataclass(frozen=True)
+class MailOrigin:
+    """What a mail adds to a draft: prefilled fields and the shared mail (never mail headers)."""
+
+    sha256: str
+    forward: str  # attached | inline
+    prefill: DraftFields = DraftFields()
+    lines: tuple[str, ...] = ()
+
+
+def save_original(root: Path, data: bytes, ext: str) -> str:
+    """Store original bytes under files/<sha>.<ext> (idempotent). Returns the sha256."""
+    sha = hashlib.sha256(data).hexdigest()
+    with data_lock(root):
+        _save_file(root, sha, ext, data)
+    return sha
+
+
 def ingest_upload(
     root: Path,
     data: bytes,
@@ -90,17 +108,50 @@ def ingest_upload(
     backend: Backend | None = None,
     ocr: OcrFn = ocr_file,
     clock: Any = None,
+    mail: MailOrigin | None = None,
 ) -> IngestResult:
     """Store one file and write a draft note. Raises UnsupportedFile, OcrError."""
-    if privacy_class is PrivacyClass.REDACTED:
-        raise ValueError("class redacted is not implemented in Phase 1a")
-    clock = clock or SystemClock()
     ext = detect_ext(data)
     if ext != "pdf":
         try:
             data, ext = clean_image(data, ext)
         except BadImage:
             raise UnsupportedFile("unreadable image") from None
+    return _ingest(root, data, ext, privacy_class, backend, ocr, clock, mail)
+
+
+def ingest_text(
+    root: Path,
+    text: str,
+    original: bytes,
+    ext: str,
+    privacy_class: PrivacyClass,
+    *,
+    backend: Backend | None = None,
+    clock: Any = None,
+    mail: MailOrigin | None = None,
+) -> IngestResult:
+    """Draft note from already extracted text. `original` (for mail: the .eml) goes to files/."""
+    if not original or len(original) > MAX_UPLOAD_BYTES:
+        raise UnsupportedFile("empty or too large")
+    result = OcrResult([PageText(1, text)], extractor="text", model_id="text")
+    return _ingest(root, original, ext, privacy_class, backend, lambda _p: result, clock, mail)
+
+
+def _ingest(
+    root: Path,
+    data: bytes,
+    ext: str,
+    privacy_class: PrivacyClass,
+    backend: Backend | None,
+    ocr: OcrFn,
+    clock: Any,
+    mail: MailOrigin | None,
+) -> IngestResult:
+    """Shared tail: save file, text, optional extraction, raw + note write, one commit."""
+    if privacy_class is PrivacyClass.REDACTED:
+        raise ValueError("class redacted is not implemented in Phase 1a")
+    clock = clock or SystemClock()
     sha = hashlib.sha256(data).hexdigest()
     with data_lock(root):
         if any((root / "raw").glob(f"*-{sha[:8]}.md")):
@@ -125,7 +176,8 @@ def ingest_upload(
                 code = "ok"
             except GatewayError:
                 extracted = None
-    fields = from_extraction(extracted)
+    fields = from_extraction(extracted) if extracted is not None else None
+    fields = fields or (mail.prefill if mail else DraftFields())
 
     received = clock.now().date()
     doc_date = fields.doc_date or received
@@ -135,31 +187,30 @@ def ingest_upload(
         "from": fields.sender,
         "date": doc_date,
         "status": "draft",
-        "source": "upload",
+        "source": "mail" if mail else "upload",
         "raw": f"raw/{slug}.md",
     }
+    if mail:
+        note_meta["forward"] = mail.forward
     if fields.deadline:
         note_meta["deadline"] = fields.deadline
         note_meta["deadline_kind"] = fields.deadline_kind
     if fields.amount:
         note_meta["amount"] = fields.amount
-    raw_meta = {
+    raw_meta: dict[str, Any] = {
         "file": f"files/{sha}.{ext}",
         "sha256": sha,
         "pages": len(result.pages),
         "extractor": result.extractor,
         "model_id": result.model_id,
     }
+    if mail:
+        raw_meta["mail_sha256"] = mail.sha256
     raw_body = "".join(f"\n## Seite {p.number}\n\n{p.text}\n" for p in result.pages)
-    codes = write_note(
-        root,
-        slug,
-        note_meta,
-        note_body(fields, "Entwurf, bitte prüfen."),
-        raw_meta,
-        raw_body,
-        clock,
-    )
+    body = note_body(fields, "Entwurf, bitte prüfen.")
+    if mail:
+        body += "".join(f"{line}\n" for line in mail.lines)
+    codes = write_note(root, slug, note_meta, body, raw_meta, raw_body, clock)
     audit(
         root,
         "ingest.done",

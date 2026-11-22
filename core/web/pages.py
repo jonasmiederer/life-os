@@ -101,7 +101,9 @@ def _val(meta: dict[str, object], key: str) -> str:
 def review_page(csrf: str, slug: str, meta: dict[str, object], file: str, error: str = "") -> bytes:
     msg = f'<p class="err">{escape(error)}</p>' if error else ""
     url = f"/{escape(file)}"
-    if file.endswith(".pdf"):
+    if file.endswith(".eml"):
+        shown = "<p>Nur Text aus der Mail. Das Original wird nicht angezeigt.</p>"
+    elif file.endswith(".pdf"):
         shown = f'<p><a href="{url}">PDF öffnen</a></p>'
     else:
         shown = f'<img src="{url}" alt="Dokumentseite">'
@@ -109,8 +111,9 @@ def review_page(csrf: str, slug: str, meta: dict[str, object], file: str, error:
         f'<option value="{k}"{" selected" if k == meta.get("type") else ""}>{v}</option>'
         for k, v in _TYPE_LABELS.items()
     )
+    source = "<p>Quelle: Mail</p>" if meta.get("source") == "mail" else ""
     form = (
-        f'{msg}<form method="post" action="/review/{escape(slug)}/confirm">'
+        f'{msg}{source}<form method="post" action="/review/{escape(slug)}/confirm">'
         f'<input type="hidden" name="csrf" value="{escape(csrf)}">'
         f'<label>Art<select name="doc_type">{options}</select></label>'
         f'<label>Absender<input name="sender" value="{_val(meta, "from")}" required></label>'

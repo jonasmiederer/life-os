@@ -17,15 +17,17 @@ TYPES = {"steuerbescheid", "rechnung", "mahnung", "kuendigung_vertrag", "versich
 DEADLINE_KINDS = {"einspruch", "zahlung", "kuendigung", "other", "none"}
 STATUSES = {"draft", "confirmed", "done"}
 SOURCES = {"upload", "folder", "mail"}
-EXTRACTORS = {"cloud", "tesseract"}
+EXTRACTORS = {"cloud", "tesseract", "text"}
+FORWARDS = {"attached", "inline"}
 
 SLUG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9-]{1,60}-[a-z0-9_]+-[0-9a-f]{8}$")
 FROM_RE = re.compile(r"^[\w .,&@'()/-]{1,120}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 NOTE_REQUIRED = {"type", "from", "date", "status", "source", "raw"}
-NOTE_OPTIONAL = {"deadline", "deadline_kind", "amount", "snooze"}
+NOTE_OPTIONAL = {"deadline", "deadline_kind", "amount", "snooze", "forward"}
 RAW_REQUIRED = {"file", "sha256", "pages", "extractor", "model_id"}
+RAW_OPTIONAL = {"mail_sha256"}
 
 
 class ValidationError(ValueError):
@@ -91,6 +93,8 @@ def validate_note(path: Path, data_dir: Path, stem: str | None = None) -> list[s
         codes.append("bad_enum:status")
     if meta["source"] not in SOURCES:
         codes.append("bad_enum:source")
+    if meta.get("forward") is not None and meta["forward"] not in FORWARDS:
+        codes.append("bad_enum:forward")
     kind = meta.get("deadline_kind") or "none"
     if kind not in DEADLINE_KINDS:
         codes.append("bad_enum:deadline_kind")
@@ -129,7 +133,7 @@ def validate_raw(path: Path) -> list[str]:
         return exc.codes
     codes = [
         f"unknown_key:{re.sub(r'[^A-Za-z0-9_]', '_', str(k))[:32]}"
-        for k in sorted(set(meta) - RAW_REQUIRED, key=str)
+        for k in sorted(set(meta) - RAW_REQUIRED - RAW_OPTIONAL, key=str)
     ]
     codes += [f"missing_key:{k}" for k in sorted(RAW_REQUIRED - set(meta))]
     if codes:
@@ -138,6 +142,10 @@ def validate_raw(path: Path) -> list[str]:
         codes.append("bad_value:sha256")
     if not isinstance(meta["pages"], int) or isinstance(meta["pages"], bool) or meta["pages"] < 1:
         codes.append("bad_value:pages")
+    if "mail_sha256" in meta and not (
+        isinstance(meta["mail_sha256"], str) and SHA_RE.match(meta["mail_sha256"])
+    ):
+        codes.append("bad_value:mail_sha256")
     if meta["extractor"] not in EXTRACTORS:
         codes.append("bad_enum:extractor")
     if not isinstance(meta["model_id"], str) or len(meta["model_id"]) > 80:
