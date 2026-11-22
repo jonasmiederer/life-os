@@ -1,0 +1,123 @@
+{
+  "degraded_mean_cer": 0.0055,
+  "degraded_scores": {
+    "amount": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "currency": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "date": {
+      "f1": 0.5714,
+      "fn": 3,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.4,
+      "tp": 2
+    },
+    "deadline": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "doc_type": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "micro": {
+      "docs": 5,
+      "f1": 0.9474,
+      "fn": 3,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 0.9,
+      "tp": 27
+    },
+    "sender": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    }
+  },
+  "label": "synthetic, rule baseline, not model quality",
+  "scores": {
+    "amount": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "currency": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "date": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "deadline": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "doc_type": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    },
+    "micro": {
+      "docs": 5,
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 30
+    },
+    "sender": {
+      "f1": 1.0,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 5
+    }
+  },
+  "text_source": "fixture generator lines"
+}
