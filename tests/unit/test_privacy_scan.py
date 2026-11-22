@@ -95,3 +95,10 @@ def test_other_identities_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
         assert identity_findings(monkeypatch, "noreply" + AT + "github.com", bad) == [
             "committer-email-mismatch"
         ]
+
+
+def test_kiro_key_shapes_fail() -> None:
+    key = "ksk" + "_" + "a1B2c3D4e5F6g7H8i9"
+    assert scan(f"token {key}") == ["kiro-key"]
+    assert scan("KIRO_API_KEY" + "=" + "A" * 24) == ["kiro-key"]
+    assert scan("KIRO_API_KEY: ${{ secrets.KIRO_API_KEY }}") == []

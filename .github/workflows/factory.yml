@@ -20,6 +20,8 @@ concurrency:
 
 env:
   KIRO_CLI_VERSION: "3.5.0"
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
   KIRO_CLI_SHA256: "7f9bb76921f477125629619450d5942e160942aba9dd8cdc4a66f7678a20c56d"
 
 jobs:
@@ -145,8 +147,21 @@ jobs:
         with:
           name: factory-patch
           path: ${{ runner.temp }}/in
-      - name: Patch gate
-        run: python3 scripts/factory_guard.py patch --patch "${RUNNER_TEMP}/in/factory.patch"
+      - name: Install gitleaks (pinned)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSfL -o "${RUNNER_TEMP}/gitleaks.tgz" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/gitleaks.tgz" -C "${RUNNER_TEMP}" gitleaks
+      - name: Apply patch (no hooks, no build, no patch code is run)
+        run: git -c core.hooksPath=/dev/null apply --index "${RUNNER_TEMP}/in/factory.patch"
+      - name: Patch gate (paths from NUL-separated git output) and secret scans
+        run: |
+          git diff --cached --no-renames --raw -z > "${RUNNER_TEMP}/raw.z"
+          git diff --cached --no-renames --numstat -z > "${RUNNER_TEMP}/numstat.z"
+          python3 scripts/factory_guard.py patch --patch "${RUNNER_TEMP}/in/factory.patch" \
+            --raw "${RUNNER_TEMP}/raw.z" --numstat "${RUNNER_TEMP}/numstat.z"
+          python3 scripts/privacy_scan.py --staged
+          "${RUNNER_TEMP}/gitleaks" stdin --config .gitleaks.toml --redact --no-banner < "${RUNNER_TEMP}/in/factory.patch"
       - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         id: app
         with:
@@ -155,15 +170,11 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-pull-requests: write
-      - name: Apply patch (no hooks, no build, no patch code is run) and privacy scan
-        run: |
-          git -c core.hooksPath=/dev/null apply --index "${RUNNER_TEMP}/in/factory.patch"
-          python3 scripts/privacy_scan.py --staged
       - name: Check WIP limit (max 3 open agent PRs)
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          n=$(gh pr list --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("factory/"))] | length')
+          n=$(gh pr list --state open --limit 100 --json headRefName --jq '[.[] | select(.headRefName | startswith("factory/"))] | length')
           test "$n" -lt 3
       - name: Push branch and open the PR
         env:

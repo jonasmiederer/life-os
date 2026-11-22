@@ -5,7 +5,7 @@ never hard-coded: it is passed in (github.repository_owner).
 
   factory_guard.py start --event FILE --owner NAME [--live-labels FILE] [--enabled true|false]
     [--require]
-  factory_guard.py patch --patch FILE
+  factory_guard.py patch --patch FILE --raw FILE --numstat FILE
 
 `start` writes start=true|false and reason=... to $GITHUB_OUTPUT (or stdout) and exits 0,
 or 1 with --require when the agent may not start.
@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -29,6 +28,8 @@ STOP_LABEL = "agent:stop"
 # Patch gate. shortcut: coarse path prefixes, no per-helper check yet; add the
 # `helper:*` label check when the first helper exists.
 ALLOWED_PREFIXES = ("core/", "helpers/", "tests/", "docs/")
+# Same list as factory/agents/actor.json fs_write deniedPaths, plus gateway code.
+DENIED_PREFIXES = ("core/gateway/", "tests/security/", "evals/baselines/")
 MAX_CHANGED_LINES = 400
 
 
@@ -80,27 +81,58 @@ def decide_start(
     return True, "ok"
 
 
-_DIFF = re.compile(r"^diff --git a/(\S+) b/(\S+)$")
+def _path_findings(path: str) -> list[str]:
+    if path.startswith("/") or ".." in path.split("/"):
+        return [f"path not allowed: {path!r}"]
+    if not path.startswith(ALLOWED_PREFIXES) or path.startswith(DENIED_PREFIXES):
+        return [f"path not allowed: {path!r}"]
+    return []
 
 
-def check_patch(text: str, max_lines: int = MAX_CHANGED_LINES) -> list[str]:
-    """Return findings; empty list means the patch may be published."""
-    if not text.strip():
-        return ["empty patch"]
+def check_patch(
+    patch_text: str, raw: bytes, numstat: bytes, max_lines: int = MAX_CHANGED_LINES
+) -> list[str]:
+    """Return findings; empty list means the patch may be published.
+
+    `raw` is `git diff --cached --no-renames --raw -z` and `numstat` is
+    `git diff --cached --no-renames --numstat -z`, both taken after `git apply --index`.
+    Paths come only from these NUL-separated outputs, never from parsing diff headers.
+    The count of `diff --git` lines must equal the number of paths, so a header git
+    reports differently (or an empty result) fails closed.
+    """
     out: list[str] = []
+    toks = raw.decode("utf-8", "surrogateescape").split("\0")
+    if toks and toks[-1] == "":
+        toks.pop()
+    n = 0
+    i = 0
+    while i < len(toks):
+        meta = toks[i].split()
+        if len(toks[i]) == 0 or toks[i][0] != ":" or len(meta) != 5 or i + 1 >= len(toks):
+            return out + ["unparsable diff output"]
+        old_mode, new_mode, status, path = meta[0][1:], meta[1], meta[4], toks[i + 1]
+        n += 1
+        i += 2
+        if status not in ("A", "M", "D"):
+            out.append(f"status not allowed: {status} {path!r}")
+        if new_mode not in ("100644", "000000") or old_mode not in ("100644", "000000"):
+            out.append(f"mode not allowed: {old_mode} {new_mode} {path!r}")
+        out += _path_findings(path)
+    if n == 0:
+        out.append("no paths")
+    headers = sum(1 for ln in patch_text.splitlines() if ln.startswith("diff --git "))
+    if headers != n:
+        out.append(f"diff headers ({headers}) do not match paths ({n})")
     changed = 0
-    for line in text.splitlines():
-        m = _DIFF.match(line)
-        if m:
-            for p in set(m.groups()):
-                if p.startswith("/") or ".." in p.split("/") or not p.startswith(ALLOWED_PREFIXES):
-                    out.append(f"path not allowed: {p}")
-        elif line.startswith(("GIT binary patch", "Binary files ")):
+    for rec in numstat.decode("utf-8", "surrogateescape").split("\0"):
+        if not rec:
+            continue
+        add, _, rest = rec.partition("\t")
+        dele, _, _path = rest.partition("\t")
+        if add == "-" or dele == "-":
             out.append("binary change")
-        elif line.startswith(("new file mode 120000", "new mode 120000")):
-            out.append("symlink")
-        elif line[:1] in "+-" and not line.startswith(("+++", "---")):
-            changed += 1
+        else:
+            changed += int(add) + int(dele)
     if changed > max_lines:
         out.append(f"too large: {changed} changed lines (max {max_lines})")
     return out
@@ -126,6 +158,8 @@ def main(argv: list[str]) -> int:
     s.add_argument("--require", action="store_true", help="exit 1 when the agent may not start")
     p = sub.add_parser("patch")
     p.add_argument("--patch", required=True)
+    p.add_argument("--raw", required=True)
+    p.add_argument("--numstat", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "start":
         event = json.loads(Path(a.event).read_text(encoding="utf-8"))
@@ -135,7 +169,11 @@ def main(argv: list[str]) -> int:
         ok, why = decide_start(event, a.owner, live, a.enabled.lower() == "true")
         _emit({"start": "true" if ok else "false", "reason": why})
         return 1 if a.require and not ok else 0
-    found = check_patch(Path(a.patch).read_text(encoding="utf-8", errors="replace"))
+    found = check_patch(
+        Path(a.patch).read_text(encoding="utf-8", errors="replace"),
+        Path(a.raw).read_bytes(),
+        Path(a.numstat).read_bytes(),
+    )
     for f in found:
         print(f"PATCH {f}")
     print(f"patch-gate: {len(found)} finding(s)")
