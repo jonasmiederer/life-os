@@ -350,3 +350,46 @@ def test_exif_gps_is_stripped_and_heic_becomes_png(
 def test_garbage_image_is_rejected(root: Path) -> None:
     with pytest.raises(UnsupportedFile):
         ingest_upload(root, b"\xff\xd8\xff" + b"not a jpeg", PrivacyClass.LOCAL, ocr=ocr_stub())
+
+
+# --- backend selection ------------------------------------------------------------------
+
+
+def test_key_file_selects_kiro_backend_without_logging_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from core.gateway.kiro import KiroBackend
+    from core.web.__main__ import build_backend
+
+    monkeypatch.delenv("KIRO_API_KEY", raising=False)
+    key = tmp_path / "key"
+    key.write_text("fake-key-value-123\n")
+    backend = build_backend({"LIFEOS_KIRO_KEY_FILE": str(key), "LIFEOS_KIRO_MODEL": "model-x"})
+    assert isinstance(backend, KiroBackend) and backend.model_id == "model-x"
+    assert __import__("os").environ["KIRO_API_KEY"] == "fake-key-value-123"
+    assert "fake-key-value-123" not in capsys.readouterr().err
+    monkeypatch.delenv("KIRO_API_KEY")
+
+
+def test_env_key_selects_kiro_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.gateway.kiro import KiroBackend
+    from core.web.__main__ import build_backend
+
+    monkeypatch.setenv("KIRO_API_KEY", "fake-key-value-123")
+    assert isinstance(
+        build_backend({"KIRO_API_KEY": "fake-key-value-123", "LIFEOS_KIRO_MODEL": "m"}), KiroBackend
+    )
+
+
+@pytest.mark.parametrize("env", [{}, {"LIFEOS_KIRO_MODEL": "m"}, {"LIFEOS_KIRO_MODEL": "auto"}])
+def test_no_key_or_model_gives_none_and_zero_calls(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str], env: dict[str, str],
+) -> None:  # fmt: skip
+    from core.web.__main__ import build_backend
+
+    monkeypatch.delenv("KIRO_API_KEY", raising=False)
+    backend = build_backend({**env, "LIFEOS_KIRO_KEY_FILE": str(tmp_path / "missing")})
+    assert backend is None and "backend.none" in capsys.readouterr().err
+    slug = ingest(root, PrivacyClass.ALLOW, backend)
+    assert slug and gateway_lines(root) == []
