@@ -1,4 +1,4 @@
-"""WSGI app: login, upload form, image serving. stdlib only.
+"""WSGI app: login, upload form, review and confirm, image serving. stdlib only.
 
 Shortcut: wsgiref server is single threaded and has no TLS. HTTPS and the VPN sit in front
 (D2). Upgrade to a real server when more than one user or a public path is needed.
@@ -20,7 +20,9 @@ from core.clock import SystemClock
 from core.gateway.interface import Backend, PrivacyClass
 from core.ingest import MAX_UPLOAD_BYTES, OcrFn, UnsupportedFile, ingest_upload
 from core.log import log_event
+from core.notify import Sender, run_due
 from core.ocr import OcrError, TesseractMissing, ocr_file
+from core.review import ReviewError, confirm, list_drafts, load_draft
 from core.web import pages
 from core.web.auth import LoginLimiter, Sessions, verify_password
 
@@ -35,6 +37,7 @@ _HEADERS = [
     ("Referrer-Policy", "no-referrer"),
     ("Cache-Control", "no-store"),
 ]
+_REVIEW_RE = re.compile(r"^/review/([0-9a-z_-]+)(/confirm)?$")
 _Response = tuple[str, list[tuple[str, str]], bytes]
 
 
@@ -67,6 +70,7 @@ class WebApp:
         clock: Any = None,
         idle_minutes: int = 30,
         secure_cookie: bool = True,
+        send: Sender | None = None,
     ) -> None:
         self.root = root
         self._hash = password_hash
@@ -76,6 +80,7 @@ class WebApp:
         self._sessions = Sessions(self._clock, timedelta(minutes=idle_minutes))
         self._limiter = LoginLimiter(self._clock)
         self._secure = secure_cookie
+        self._send = send
 
     # --- plumbing -------------------------------------------------------------------------
     def __call__(
@@ -138,6 +143,13 @@ class WebApp:
             return self._redirect("/login")
         if method == "GET" and path == "/":
             return self._html("200 OK", pages.upload_page(session.csrf))
+        if path == "/review" and method == "GET":
+            return self._html("200 OK", pages.review_list_page(list_drafts(self.root)))
+        rm = _REVIEW_RE.match(path)
+        if rm and method == "GET" and not rm.group(2):
+            return self._review_form(rm.group(1), session.csrf)
+        if rm and method == "POST" and rm.group(2):
+            return self._confirm(environ, rm.group(1), session.csrf)
         if method == "GET":
             m = _FILE_RE.match(path)
             if m:
@@ -174,6 +186,35 @@ class WebApp:
             [("Content-Type", _TYPES[ext]), ("Content-Disposition", "inline")],
             path.read_bytes(),
         )
+
+    def _review_form(
+        self, slug: str, csrf: str, error: str = "", status: str = "200 OK"
+    ) -> _Response:
+        try:
+            draft = load_draft(self.root, slug)
+        except ReviewError:
+            return self._html("404 Not Found", pages.error_page("Nicht gefunden."))
+        return self._html(status, pages.review_page(csrf, slug, draft.meta, draft.file, error))
+
+    def _confirm(self, environ: dict[str, Any], slug: str, csrf: str) -> _Response:
+        raw = parse_qs(self._body(environ).decode("utf-8", "replace"))
+        form = {k: v[0] for k, v in raw.items()}
+        if form.get("csrf", "") != csrf:
+            return self._html(
+                "403 Forbidden", pages.error_page("Sitzung ungültig. Bitte neu laden.")
+            )
+        try:
+            confirm(
+                self.root, slug,
+                doc_type=form.get("doc_type", ""), sender=form.get("sender", ""),
+                doc_date=form.get("doc_date", ""), amount=form.get("amount", ""),
+                deadline=form.get("deadline", ""), clock=self._clock,
+            )  # fmt: skip
+        except ReviewError as exc:
+            return self._review_form(slug, csrf, str(exc), "400 Bad Request")
+        if self._send is not None:
+            run_due(self.root, self._clock, self._send)
+        return self._html("200 OK", pages.confirmed_page(bool(form.get("deadline", "").strip())))
 
     def _upload(self, environ: dict[str, Any], csrf: str) -> _Response:
         try:

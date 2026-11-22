@@ -11,6 +11,8 @@ description = "life-os core: note store, validation, runtime basics"
 requires-python = ">=3.12"
 dependencies = [
   "PyYAML>=6.0,<7",
+  "pillow>=13,<14",
+  "pillow-heif>=1.8,<2",
 ]
 
 [project.scripts]
@@ -27,6 +29,7 @@ dev = [
     "pyyaml==6.0.3",
     "types-PyYAML==6.0.12.20260408",
     "pillow==13.0.0",
+    "pillow-heif==1.8.1",
 ]
 sast = ["bandit==1.9.4", "semgrep==1.186.0"]
 deps = ["pip-audit==2.10.1"]
