@@ -43,6 +43,7 @@ services:
       LIFEOS_DATA_DIR: /data
       LIFEOS_PASSWORD_HASH_FILE: /run/secrets/web_password_hash
       LIFEOS_SESSION_MINUTES: "30"
+      LIFEOS_NTFY_URL: http://ntfy:8080
     secrets: [web_password_hash]
     ports:
       - "127.0.0.1:${LIFEOS_WEB_PORT:-8080}:8080"
@@ -50,7 +51,7 @@ services:
       - ${LIFEOS_DATA_DIR:-./data}:/data
     tmpfs:
       - /tmp
-    networks: [edge]
+    networks: [edge, internal]  # internal: reaches ntfy for deadline pushes
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/login')"]
       interval: 10s
@@ -80,7 +81,8 @@ services:
       retries: 5
 
 # Shortcut: web has an internet route until the gateway work item adds an egress-deny proxy.
-# It has no backend wired, so no cloud call is possible yet.
+# web picks the Kiro backend only when a key and LIFEOS_KIRO_MODEL are set (else no cloud call).
+# The image has no kiro-cli yet: a key without it fails per call as BackendUnavailable.
 secrets:
   web_password_hash:
     file: ${LIFEOS_WEB_PASSWORD_HASH_FILE:-./secrets/web_password_hash}
