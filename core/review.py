@@ -32,6 +32,7 @@ class Draft:
     slug: str
     meta: dict[str, Any]
     file: str  # files/<sha>.<ext>
+    text: str = ""  # raw body, shown for mail drafts
 
 
 def _parse_date(text: str, label: str) -> date | None:
@@ -60,10 +61,10 @@ def load_draft(root: Path, slug: str) -> Draft:
     path = root / "notes" / f"{slug}.md"
     try:
         meta, _ = read_note(path)
-        raw_meta, _ = read_note(root / "raw" / f"{slug}.md")
+        raw_meta, raw_body = read_note(root / "raw" / f"{slug}.md")
     except (OSError, ValidationError):
         raise ReviewError("Nicht gefunden.") from None
-    return Draft(slug, meta, str(raw_meta.get("file", "")))
+    return Draft(slug, meta, str(raw_meta.get("file", "")), raw_body)
 
 
 def confirm(

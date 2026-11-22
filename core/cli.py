@@ -11,6 +11,7 @@ from core.backup import BackupError, backup, restore_verify
 from core.config import ConfigError, load_config
 from core.datadir import DataRepoError, check_layout, check_no_remote, init_data_dir
 from core.log import log_event
+from core.mail.process import process_inbox
 from core.reindex import reindex
 from core.report import format_report
 from core.smoke import run_smoke
@@ -35,7 +36,18 @@ def _serve(root: Path) -> int:
         bad = scan(root)
         if bad:
             log_event("core.scan", count=len(bad))
+        _mail_tick(root)
         time.sleep(60)
+
+
+def _mail_tick(root: Path) -> None:
+    """Scheduler tick: turn forwarded mail in inbox/ into draft notes. Never stops the loop."""
+    try:
+        res = process_inbox(root)
+        if res.done or res.rejected:
+            log_event("mail.tick", count=res.notes, ok=not res.rejected)
+    except Exception:  # noqa: BLE001 - one bad mail must not stop validation and reminders
+        log_event("mail.tick", ok=False, code="error")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     rs = sub.add_parser("restore", help="restore the latest snapshot to a scratch dir")
     rs.add_argument("--verify", action="store_true", required=True)
     sub.add_parser("reindex", help="delete and rebuild the qmd cache")
+    mp = sub.add_parser("mail", help="mail pipeline")
+    mp.add_argument("action", choices=["process"])
     sub.add_parser("serve", help="run the core service")
     args = parser.parse_args(argv)
 
@@ -96,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if fails else 0
         elif args.cmd == "reindex":
             reindex(root)
+        elif args.cmd == "mail":
+            res = process_inbox(root)
+            print(
+                f"done={res.done} rejected={res.rejected} notes={res.notes} "
+                f"duplicates={res.duplicates} waiting={res.waiting}"
+            )
+            return 1 if res.rejected or res.waiting else 0
         elif args.cmd == "serve":
             return _serve(root)
     except DataRepoError as exc:
