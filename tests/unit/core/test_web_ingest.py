@@ -207,7 +207,11 @@ def test_login_required_for_upload_and_images(root: Path) -> None:
     ctype = "multipart/form-data; boundary=x"
     assert anon.request("POST", "/upload", b"", ctype)[0].startswith("303")
     status, headers, data = c.request("GET", f"/files/{name}")
-    assert status.startswith("200") and data == PNG and headers["Content-Type"] == "image/png"
+    assert (
+        status.startswith("200")
+        and data == (root / "files" / name).read_bytes()
+        and headers["Content-Type"] == "image/png"
+    )
     assert c.request("GET", "/files/../../etc/passwd")[0].startswith("404")
     c.request("POST", "/logout")
     assert c.request("GET", f"/files/{name}")[0].startswith("303")

@@ -43,6 +43,7 @@ services:
       LIFEOS_DATA_DIR: /data
       LIFEOS_PASSWORD_HASH_FILE: /run/secrets/web_password_hash
       LIFEOS_SESSION_MINUTES: "30"
+      LIFEOS_NTFY_URL: http://ntfy:8080
     secrets: [web_password_hash]
     ports:
       - "127.0.0.1:${LIFEOS_WEB_PORT:-8080}:8080"
@@ -50,7 +51,7 @@ services:
       - ${LIFEOS_DATA_DIR:-./data}:/data
     tmpfs:
       - /tmp
-    networks: [edge]
+    networks: [edge, internal]  # internal: reaches ntfy for deadline pushes
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/login')"]
       interval: 10s

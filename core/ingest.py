@@ -1,7 +1,8 @@
 """Ingest one uploaded document: files/ -> OCR -> raw/ -> draft note in notes/ -> one commit.
 
-Extraction goes through the Backend protocol and only when the confirmed class is
-`allow`. Classes `local` and `block` (and the "nur lokal" box) make zero backend calls.
+Extraction goes through the gateway router (one audit line per backend call) and only when
+the confirmed class is `allow` and the text has no health or ID keyword. Classes `local`
+and `block` (and the "nur lokal" box) make zero backend calls.
 The caller (web form, later folder or mail) must pass a class the owner confirmed (D21).
 """
 
@@ -18,7 +19,10 @@ from typing import Any
 
 from core.clock import SystemClock
 from core.extract.draft import DraftFields, from_extraction
+from core.gateway.audit import AuditLog
 from core.gateway.interface import Backend, GatewayError, GatewayRequest, PrivacyClass
+from core.gateway.router import Gateway, intake_class
+from core.images import BadImage, clean_image, is_heic
 from core.log import audit
 from core.ocr import OcrResult, ocr_file
 from core.store import data_lock, write_note
@@ -30,7 +34,7 @@ OcrFn = Callable[[Path], OcrResult]
 
 
 class UnsupportedFile(ValueError):
-    """Upload is not a PNG, JPEG or PDF, or is empty or too large."""
+    """Upload is not a PNG, JPEG, HEIC or PDF, or is empty, too large or unreadable."""
 
 
 @dataclass(frozen=True)
@@ -49,7 +53,9 @@ def detect_ext(data: bytes) -> str:
     for magic, ext in _MAGIC:
         if data.startswith(magic):
             return ext
-    raise UnsupportedFile("not png, jpeg or pdf")
+    if is_heic(data):
+        return "heic"
+    raise UnsupportedFile("not png, jpeg, heic or pdf")
 
 
 def slugify(text: str) -> str:
@@ -67,8 +73,8 @@ def _save_file(root: Path, sha: str, ext: str, data: bytes) -> Path:
     return dest
 
 
-def _body(fields: DraftFields) -> str:
-    lines = ["Entwurf, bitte prüfen.", "", f"Absender: {fields.sender}"]
+def note_body(fields: DraftFields, header: str) -> str:
+    lines = [header, "", f"Absender: {fields.sender}"]
     if fields.amount:
         lines.append(f"Betrag: {fields.amount} {fields.currency or ''}".rstrip())
     if fields.deadline:
@@ -90,6 +96,11 @@ def ingest_upload(
         raise ValueError("class redacted is not implemented in Phase 1a")
     clock = clock or SystemClock()
     ext = detect_ext(data)
+    if ext != "pdf":
+        try:
+            data, ext = clean_image(data, ext)
+        except BadImage:
+            raise UnsupportedFile("unreadable image") from None
     sha = hashlib.sha256(data).hexdigest()
     with data_lock(root):
         if any((root / "raw").glob(f"*-{sha[:8]}.md")):
@@ -101,15 +112,19 @@ def ingest_upload(
     extracted: dict[str, object] | None = None
     code = "skipped"
     if privacy_class is PrivacyClass.ALLOW and backend is not None and result.text.strip():
-        calls = 1
-        code = "failed"
-        try:
-            extracted = backend.run(
-                GatewayRequest(f"doc-{sha[:8]}", privacy_class, "extract", result.text)
-            ).data
-            code = "ok"
-        except GatewayError:
-            extracted = None
+        # Health or ID keywords downgrade allow to block before any call (design 2.13).
+        klass = intake_class(result.text, local_only=False, default=privacy_class)
+        if klass is PrivacyClass.ALLOW:
+            calls = 1
+            code = "failed"
+            gateway = Gateway(backend, AuditLog(root / "audit" / "gateway.jsonl"))
+            try:
+                extracted = gateway.run(
+                    GatewayRequest(f"doc-{sha[:8]}", klass, "extract", result.text)
+                ).data
+                code = "ok"
+            except GatewayError:
+                extracted = None
     fields = from_extraction(extracted)
 
     received = clock.now().date()
@@ -136,7 +151,15 @@ def ingest_upload(
         "model_id": result.model_id,
     }
     raw_body = "".join(f"\n## Seite {p.number}\n\n{p.text}\n" for p in result.pages)
-    codes = write_note(root, slug, note_meta, _body(fields), raw_meta, raw_body, clock)
+    codes = write_note(
+        root,
+        slug,
+        note_meta,
+        note_body(fields, "Entwurf, bitte prüfen."),
+        raw_meta,
+        raw_body,
+        clock,
+    )
     audit(
         root,
         "ingest.done",
