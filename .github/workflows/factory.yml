@@ -160,7 +160,8 @@ jobs:
           git diff --cached --no-renames --numstat -z > "${RUNNER_TEMP}/numstat.z"
           python3 scripts/factory_guard.py patch --patch "${RUNNER_TEMP}/in/factory.patch" \
             --raw "${RUNNER_TEMP}/raw.z" --numstat "${RUNNER_TEMP}/numstat.z"
-          python3 scripts/privacy_scan.py --staged
+          # The deny list is owner-local; CI uses generic patterns only.
+          python3 scripts/privacy_scan.py --staged --no-denylist
           "${RUNNER_TEMP}/gitleaks" stdin --config .gitleaks.toml --redact --no-banner < "${RUNNER_TEMP}/in/factory.patch"
       - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         id: app
