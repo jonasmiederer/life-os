@@ -45,6 +45,8 @@ RULES = {
     "tax-id-or-11-digits": re.compile(r"(?<![\w.-])[1-9]\d{10}(?![\w-])"),
     "phone": re.compile(r"(?<![\w.])(?:\+|00)\d{1,3}[ /-]?\(?\d{2,5}\)?[ /-]?\d{3,}(?:[ /-]?\d+)*"
                         r"|(?<![\w.])0\d{2,5}[ /-]\d{4,}"),
+    # Kiro API key: `ksk_` prefix, or a KIRO_API_KEY assignment with a long literal value.
+    "kiro-key": re.compile(r"\bksk_[A-Za-z0-9_-]{16,}|KIRO_API_KEY\s*[=:]\s*['\"]?[A-Za-z0-9_-]{20,}"),
     "home-path": re.compile(r"/(?:Users|home)/(?!(?:<|\$|\{|user\b|name\b|runner\b|example\b|you\b|me\b))[^\s/'\"`]+"),
 }
 BINARY_EXT = (".png", ".jpg", ".jpeg", ".gif", ".heic", ".pdf", ".webp", ".tif", ".tiff", ".zip", ".gz")
