@@ -29,7 +29,7 @@ dev = [
     "pyyaml==6.0.3",
     "types-PyYAML==6.0.12.20260408",
     "pillow==13.0.0",
-    "pillow-heif==1.8.1",
+    "pillow-heif==1.9.0",
 ]
 sast = ["bandit==1.9.4", "semgrep==1.186.0"]
 deps = ["pip-audit==2.10.1"]
