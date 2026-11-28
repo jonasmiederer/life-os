@@ -33,7 +33,7 @@ dev = [
 ]
 sast = ["bandit==1.9.4", "semgrep==1.186.0"]
 deps = ["pip-audit==2.10.1"]
-workflow = ["zizmor==1.32.0"]
+workflow = ["zizmor==1.33.1"]
 
 [tool.ruff]
 target-version = "py312"
